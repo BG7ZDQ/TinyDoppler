@@ -9,6 +9,7 @@
 #include <QGuiApplication>
 #include <QIcon>
 #include <QLocale>
+#include <QSettings>
 #include <QTranslator>
 #include <QTimer>
 
@@ -77,6 +78,17 @@ int main(int argc, char* argv[])
                        screenshotCatalog, language});
     parser.process(application);
 
+    QSettings settings(QStringLiteral("TinyDoppler"), QStringLiteral("Tracker"));
+    const double longitudeDeg = parser.isSet(longitude)
+                                    ? parser.value(longitude).toDouble()
+                                    : settings.value(QStringLiteral("longitude"), 0.0).toDouble();
+    const double latitudeDeg = parser.isSet(latitude)
+                                   ? parser.value(latitude).toDouble()
+                                   : settings.value(QStringLiteral("latitude"), 0.0).toDouble();
+    const double altitudeMeters = parser.isSet(altitude)
+                                      ? parser.value(altitude).toDouble()
+                                      : settings.value(QStringLiteral("altitude"), 0.0).toDouble();
+
     if (parser.isSet(screenshotCatalog)) {
         SatelliteCatalog catalog;
         QString error;
@@ -93,9 +105,8 @@ int main(int argc, char* argv[])
         return application.exec();
     }
 
-    SatelliteTrackerDialog window(
-        parser.value(longitude).toDouble(), parser.value(latitude).toDouble(),
-        parser.value(altitude).toDouble(), parser.value(satellite));
+    SatelliteTrackerDialog window(longitudeDeg, latitudeDeg, altitudeMeters,
+                                  parser.value(satellite));
     window.show();
     if (parser.isSet(screenshot)) {
         const QString path = parser.value(screenshot);

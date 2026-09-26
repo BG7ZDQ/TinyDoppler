@@ -47,6 +47,8 @@ private:
     void refreshSatelliteChoices(int preferredNorad = 0);
     void editCatalog();
     void editSources();
+    void editStation();
+    void refreshStationLabel();
     void publishDoppler(qint64 targetHz, qint64 correctionHz, bool valid);
 
     double longitudeDeg_;
@@ -73,6 +75,7 @@ private:
     QLabel* downlink_ = nullptr;
     QLabel* tleEpoch_ = nullptr;
     QLabel* status_ = nullptr;
+    QLabel* station_ = nullptr;
     QPushButton* updateButton_ = nullptr;
     QNetworkAccessManager* network_ = nullptr;
     QTimer* timer_ = nullptr;

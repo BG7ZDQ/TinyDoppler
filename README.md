@@ -8,9 +8,10 @@ tuning and I/Q delivery require the Windows plugin.
 
 ## Use
 
-1. Start `TinyDoppler` and enter observer coordinates with `--longitude`,
-   `--latitude`, and `--altitude` (degrees, degrees, metres). A launcher can
-   supply these options. See `--help` for all options.
+1. Start `TinyDoppler` and use **Ground station** to enter observer
+   coordinates. They are remembered locally. A launcher can also supply them
+   with `--longitude`, `--latitude`, and `--altitude` (degrees, degrees,
+   metres). See `--help` for all options.
 2. Select a satellite and one of its downlink frequencies. Use **Manage
    satellites and frequencies** to add, rename, or remove satellites and
    frequencies. The NORAD field accepts decimal catalog numbers and standard

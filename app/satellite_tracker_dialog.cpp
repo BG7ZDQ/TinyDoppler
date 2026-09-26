@@ -104,7 +104,7 @@ SatelliteTrackerDialog::SatelliteTrackerDialog(
     loadSettings();
     refreshSatelliteChoices();
     adjustSize();
-    const QSize comfortable(500, 425);
+    const QSize comfortable(500, 445);
     setMinimumSize(comfortable);
     resize(comfortable);
 
@@ -230,16 +230,21 @@ void SatelliteTrackerDialog::buildUi()
     sourceLayout->addLayout(sourceActions);
     root->addWidget(sourceBox);
 
-    auto* station = new QLabel(
-        QCoreApplication::translate("ASRTU", "地面站：%1°, %2°，%3 m")
-            .arg(longitudeDeg_, 0, 'f', 5)
-            .arg(latitudeDeg_, 0, 'f', 5)
-            .arg(altitudeMeters_, 0, 'f', 1), this);
-    station->setStyleSheet(QStringLiteral("color:#667788;"));
-    root->addWidget(station);
+    auto* stationRow = new QHBoxLayout;
+    station_ = new QLabel(this);
+    station_->setStyleSheet(QStringLiteral("color:#667788;"));
+    refreshStationLabel();
+    stationRow->addWidget(station_, 1);
+    auto* editStationButton = new QPushButton(tr("设置地面站"), this);
+    editStationButton->setStyleSheet(QStringLiteral(
+        "QPushButton { min-height:25px; padding:0 8px; }"));
+    stationRow->addWidget(editStationButton);
+    root->addLayout(stationRow);
 
     connect(updateButton_, &QPushButton::clicked, this, [this] { updateTle(); });
     connect(manageButton, &QPushButton::clicked, this, [this] { editCatalog(); });
+    connect(editStationButton, &QPushButton::clicked, this,
+            [this] { editStation(); });
     connect(sourceButton, &QPushButton::clicked, this, [this] { editSources(); });
     connect(openTleButton, &QPushButton::clicked, this, [] {
         QDesktopServices::openUrl(
@@ -325,6 +330,60 @@ void SatelliteTrackerDialog::saveSettings()
     QSettings settings(QStringLiteral("TinyDoppler"), QStringLiteral("Tracker"));
     settings.setValue(QStringLiteral("tle_sources"), sourceUrls_);
     settings.setValue(QStringLiteral("satellite"), satellite_->currentText());
+    settings.setValue(QStringLiteral("longitude"), longitudeDeg_);
+    settings.setValue(QStringLiteral("latitude"), latitudeDeg_);
+    settings.setValue(QStringLiteral("altitude"), altitudeMeters_);
+}
+
+void SatelliteTrackerDialog::refreshStationLabel()
+{
+    station_->setText(
+        QCoreApplication::translate("ASRTU", "地面站：%1°, %2°，%3 m")
+            .arg(longitudeDeg_, 0, 'f', 5)
+            .arg(latitudeDeg_, 0, 'f', 5)
+            .arg(altitudeMeters_, 0, 'f', 1));
+}
+
+void SatelliteTrackerDialog::editStation()
+{
+    QDialog dialog(this);
+    dialog.setWindowTitle(tr("地面站位置"));
+    auto* layout = new QVBoxLayout(&dialog);
+    auto* form = new QFormLayout;
+    auto* longitude = new QDoubleSpinBox(&dialog);
+    auto* latitude = new QDoubleSpinBox(&dialog);
+    auto* altitude = new QDoubleSpinBox(&dialog);
+    longitude->setRange(-180.0, 180.0);
+    latitude->setRange(-90.0, 90.0);
+    altitude->setRange(-500.0, 10000.0);
+    longitude->setDecimals(6);
+    latitude->setDecimals(6);
+    altitude->setDecimals(1);
+    longitude->setSuffix(QStringLiteral("°"));
+    latitude->setSuffix(QStringLiteral("°"));
+    altitude->setSuffix(QStringLiteral(" m"));
+    longitude->setValue(longitudeDeg_);
+    latitude->setValue(latitudeDeg_);
+    altitude->setValue(altitudeMeters_);
+    form->addRow(tr("经度"), longitude);
+    form->addRow(tr("纬度"), latitude);
+    form->addRow(tr("海拔"), altitude);
+    layout->addLayout(form);
+    auto* buttons = new QDialogButtonBox(
+        QDialogButtonBox::Save | QDialogButtonBox::Cancel, &dialog);
+    buttons->button(QDialogButtonBox::Save)->setText(tr("保存"));
+    buttons->button(QDialogButtonBox::Cancel)->setText(tr("取消"));
+    layout->addWidget(buttons);
+    connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+    connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+    if (dialog.exec() != QDialog::Accepted)
+        return;
+    longitudeDeg_ = longitude->value();
+    latitudeDeg_ = latitude->value();
+    altitudeMeters_ = altitude->value();
+    refreshStationLabel();
+    saveSettings();
+    updateTracking();
 }
 
 void SatelliteTrackerDialog::updateTle()
