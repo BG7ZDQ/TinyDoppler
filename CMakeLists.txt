@@ -25,6 +25,8 @@ add_executable(TinyDoppler
     app/catalog_dialog.cpp
     app/catalog_dialog.h
     app/resources.qrc)
+set_target_properties(TinyDoppler PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
 target_include_directories(TinyDoppler PRIVATE app third_party/sgp4)
 target_link_libraries(TinyDoppler PRIVATE tiny_sgp4
     Qt5::Core Qt5::Gui Qt5::Widgets Qt5::Network)
