@@ -28,9 +28,9 @@ namespace SDRSharp.AstroSeriesBridge
             try
             {
                 using (RegistryKey key = Registry.CurrentUser.OpenSubKey(@"Software\TinyDoppler"))
-                    return key == null || Convert.ToInt32(key.GetValue("AutoDoppler", 1)) != 0;
+                    return key != null && Convert.ToInt32(key.GetValue("AutoDoppler", 0)) != 0;
             }
-            catch { return true; }
+            catch { return false; }
         }
 
         private static void SaveAutoDoppler(bool enabled)
