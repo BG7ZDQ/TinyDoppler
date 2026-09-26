@@ -1,0 +1,8 @@
+/build/
+/build-*/
+/dist/
+/plugin/bin/
+/plugin/obj/
+*.user
+*.pdb
+*.log
