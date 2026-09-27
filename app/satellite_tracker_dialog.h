@@ -4,6 +4,9 @@
 
 #include <QDialog>
 #include <QVector>
+#include <QMap>
+#include <QQueue>
+#include <QSet>
 
 #include "sgp4.h"
 
@@ -11,6 +14,7 @@ class QComboBox;
 class QDoubleSpinBox;
 class QLabel;
 class QNetworkAccessManager;
+class QNetworkReply;
 class QPushButton;
 class QTimer;
 
@@ -20,12 +24,13 @@ class SatelliteTrackerDialog final : public QDialog
 public:
     SatelliteTrackerDialog(double longitudeDeg, double latitudeDeg,
                            double altitudeMeters, const QString& preferredSatellite,
-                           QWidget* parent = nullptr);
+                           QWidget* parent = nullptr, bool integrated = false);
     ~SatelliteTrackerDialog() override;
     static bool validateEphemeris(const QByteArray& payload,
                                   int expectedNorad, QString* error);
 
 private:
+    friend struct TrackerTestAccess;
     struct Satellite {
         QString name;
         sgp4_tle_t tle{};
@@ -38,6 +43,9 @@ private:
     void updateTle();
     void downloadNextSource();
     void finishDownloads();
+    void saveEphemerisCache();
+    void queueEphemerisLookup(int norad);
+    void startNextEphemerisLookup();
     bool installEphemerides(const QList<QByteArray>& sources);
     static bool parseEphemeris(const QByteArray& payload,
                                QVector<Satellite>* parsed, QString* error);
@@ -55,14 +63,19 @@ private:
     double latitudeDeg_;
     double altitudeMeters_;
     QString preferredSatellite_;
+    bool integrated_ = false;
     SatelliteCatalog catalog_;
     QVector<Satellite> satellites_;
     QStringList downloadSources_;
     QStringList sourceUrls_;
-    QList<QByteArray> downloadedSources_;
     int downloadIndex_ = 0;
     int successfulDownloads_ = 0;
     QStringList downloadErrors_;
+    QMap<QString, QByteArray> cachedSources_;
+    QQueue<int> lookupQueue_;
+    QSet<int> pendingLookups_;
+    bool downloading_ = false;
+    QNetworkReply* lookupReply_ = nullptr;
 
     QComboBox* satellite_ = nullptr;
     QComboBox* frequencyPreset_ = nullptr;

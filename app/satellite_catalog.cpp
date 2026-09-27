@@ -35,6 +35,10 @@ bool jsonInteger(const QJsonValue& value, qint64* output)
 
 QString SatelliteCatalog::filePath()
 {
+    const QString configDirectory =
+        QString::fromLocal8Bit(qgetenv("TINY_DOPPLER_CONFIG_DIR"));
+    if (QDir::isAbsolutePath(configDirectory))
+        return QDir(configDirectory).filePath(QStringLiteral("satellites.json"));
     return QDir(QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation))
         .filePath(QStringLiteral("satellites.json"));
 }
@@ -156,6 +160,10 @@ bool SatelliteCatalog::load(QString* error)
     const QString path = filePath();
     QFile file(path);
     const bool userFileExists = file.exists();
+    if (!userFileExists && !QFile::exists(QStringLiteral(":/tiny/default_satellites.json"))) {
+        entries_.clear();
+        return true;
+    }
     if (!userFileExists)
         file.setFileName(QStringLiteral(":/tiny/default_satellites.json"));
     if (!file.open(QIODevice::ReadOnly)) {
@@ -164,6 +172,7 @@ bool SatelliteCatalog::load(QString* error)
     }
     QList<SatelliteProfile> parsed;
     const QByteArray bytes = file.readAll();
+    file.close();
     if (!parse(bytes, &parsed, error))
         return false;
     entries_ = std::move(parsed);
@@ -183,6 +192,22 @@ bool SatelliteCatalog::load(QString* error)
                 if (!parse(defaultBytes, &supplied, &defaultError)) {
                     if (error) *error = defaultError;
                     return false;
+                }
+                // BY04's provisional SatNOGS ID was replaced by its cataloged
+                // NORAD ID. Keep any frequencies selected by the user.
+                if (currentRevision < 3) {
+                    for (int index = 0; index < entries_.size(); ++index) {
+                        SatelliteProfile& entry = entries_[index];
+                        if (entry.norad != 98247 ||
+                            (entry.name.compare(QStringLiteral("BY04"), Qt::CaseInsensitive) != 0 &&
+                             entry.name.compare(QStringLiteral("BY70-4"), Qt::CaseInsensitive) != 0))
+                            continue;
+                        if (find(100469))
+                            entries_.removeAt(index);
+                        else
+                            entry.norad = 100469;
+                        break;
+                    }
                 }
                 for (const SatelliteProfile& profile : supplied) {
                     if (!find(profile.norad))
@@ -222,7 +247,7 @@ bool SatelliteCatalog::save(QString* error) const
     }
     const QByteArray bytes = QJsonDocument(QJsonObject{
         {QStringLiteral("schemaVersion"), 1},
-        {QStringLiteral("catalogRevision"), 2},
+        {QStringLiteral("catalogRevision"), 3},
         {QStringLiteral("satellites"), satellites}
     }).toJson(QJsonDocument::Indented);
     if (file.write(bytes) != bytes.size() || !file.commit()) {
@@ -232,9 +257,47 @@ bool SatelliteCatalog::save(QString* error) const
     return true;
 }
 
+QStringList SatelliteCatalog::defaultSources()
+{
+    QFile defaults(QStringLiteral(":/tiny/default_satellites.json"));
+    if (!defaults.open(QIODevice::ReadOnly))
+        return {};
+    const QJsonArray sources = QJsonDocument::fromJson(defaults.readAll()).object()
+                                  .value(QStringLiteral("sources")).toArray();
+    QStringList result;
+    for (const auto& source : sources) {
+        if (source.isString() && !source.toString().trimmed().isEmpty())
+            result.append(source.toString().trimmed());
+    }
+    return result;
+}
+
 void SatelliteCatalog::setEntries(QList<SatelliteProfile> entries)
 {
     entries_ = std::move(entries);
+}
+
+bool SatelliteCatalog::mergeDiscovered(const QList<SatelliteProfile>& discovered,
+                                       QString* error)
+{
+    const auto previous = entries_;
+    QSet<int> known;
+    for (const auto& entry : entries_)
+        known.insert(entry.norad);
+    for (const auto& satellite : discovered) {
+        if (satellite.norad <= 0 || known.contains(satellite.norad))
+            continue;
+        QString name = satellite.name.trimmed().left(120);
+        if (name.isEmpty())
+            name = QStringLiteral("NORAD %1").arg(satellite.norad);
+        // Orbital elements do not provide a radio frequency.
+        entries_.append({satellite.norad, name, {}, 0});
+        known.insert(satellite.norad);
+    }
+    if (entries_.size() == previous.size() || save(error))
+        return true;
+    entries_ = previous;
+    return false;
 }
 
 const SatelliteProfile* SatelliteCatalog::find(int norad) const

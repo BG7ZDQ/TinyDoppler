@@ -12,25 +12,32 @@ tuning and I/Q delivery require the Windows plugin.
    coordinates. They are remembered locally. A launcher can also supply them
    with `--longitude`, `--latitude`, and `--altitude` (degrees, degrees,
    metres). See `--help` for all options.
-2. Select a satellite and one of its downlink frequencies. Use **Manage
-   satellites and frequencies** to add, rename, or remove satellites and
-   frequencies. The NORAD field accepts decimal catalog numbers and standard
+2. The standalone app starts with no satellites or orbit sources. Use
+   **Satellites and frequencies** to add a name, NORAD number, and downlink
+   frequencies, or download orbit data to discover satellites automatically.
+   The NORAD field accepts decimal catalog numbers and standard
    five-character Alpha-5 values such as `A0465` (= 100465).
-3. Use **Update orbit data** to refresh the configured sources. **Sources**
-   edits their URLs. The application shows an error dialog if an orbit source
+   Saving a newly added satellite starts a background CelesTrak lookup. If
+   matching, valid orbit data is found, its JSON source is added automatically.
+   A failed lookup leaves the satellite intact so a source can be added manually.
+3. Add download URLs in **Orbit data management**, then use **Update orbit data**.
+   The application shows an error dialog if an orbit source
    cannot be parsed. A previously valid local cache remains available.
 
 Satellite names, NORAD IDs, frequencies, and each satellite's selected
 frequency are stored in the user configuration directory as `satellites.json`.
-The file is created from `assets/default_satellites.json` on first run.
-Updates merge only newly supplied default satellites; existing user entries
-and frequency choices are preserved. Writes are atomic. Orbital data and the
-satellite catalog are separate: downloading new TLE/OMM does not overwrite
-operator frequency settings. Use **Open folder** in the app to find its
-downloaded orbital-data cache.
+The standalone catalog starts empty. Downloads add newly discovered satellites
+by NORAD number without changing existing names or frequency settings. New
+satellites have no frequency until the user supplies one. Writes are atomic.
+ASRTU receiver presets belong to the receiver repository and are embedded only
+by its build. Standalone configuration and cache are separate from the receiver.
+Existing receiver configuration files are left in place.
+Orbit data is cached per source; an unavailable source does not discard its
+previously downloaded data when other sources update successfully.
 
 The exact configuration path is the platform's Qt
-`QStandardPaths::AppConfigLocation` for the `TinyDoppler` application. It is
+`QStandardPaths::AppConfigLocation` for `TinyDopplerStandalone` (standalone)
+or `TinyDoppler` (receiver). It is
 not placed beside the executable, because that directory may be read-only.
 
 ## Build the app

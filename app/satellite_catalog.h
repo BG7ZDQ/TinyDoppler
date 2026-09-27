@@ -2,6 +2,7 @@
 
 #include <QList>
 #include <QString>
+#include <QStringList>
 
 struct SatelliteProfile {
     int norad = 0;
@@ -13,6 +14,7 @@ struct SatelliteProfile {
 class SatelliteCatalog {
 public:
     static QString filePath();
+    static QStringList defaultSources();
     static bool parseNorad(const QString& input, int* number);
     static QString alpha5(int number);
 
@@ -22,6 +24,7 @@ public:
     void setEntries(QList<SatelliteProfile> entries);
     const SatelliteProfile* find(int norad) const;
     bool selectFrequency(int norad, qint64 frequencyHz, QString* error);
+    bool mergeDiscovered(const QList<SatelliteProfile>& discovered, QString* error);
 
 private:
     static bool parse(const QByteArray& json, QList<SatelliteProfile>* entries,

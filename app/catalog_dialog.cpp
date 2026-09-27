@@ -3,54 +3,173 @@
 #include <QDialogButtonBox>
 #include <QDoubleSpinBox>
 #include <QFormLayout>
+#include <QFontMetrics>
 #include <QGroupBox>
 #include <QHBoxLayout>
-#include <QInputDialog>
 #include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
 #include <QMessageBox>
+#include <QPainter>
 #include <QPushButton>
+#include <QStyledItemDelegate>
 #include <QVBoxLayout>
+
+namespace {
+class FrequencyRowDelegate final : public QStyledItemDelegate {
+public:
+    using QStyledItemDelegate::QStyledItemDelegate;
+    QSize sizeHint(const QStyleOptionViewItem& option,
+                   const QModelIndex& index) const override
+    {
+        QSize size = QStyledItemDelegate::sizeHint(option, index);
+        return {size.width() + 28, qMax(size.height(), 36)};
+    }
+    void paint(QPainter* painter, const QStyleOptionViewItem& option,
+               const QModelIndex& index) const override
+    {
+        painter->save();
+        painter->setRenderHint(QPainter::Antialiasing);
+        const QRect row = option.rect.adjusted(2, 2, -2, -2);
+        if (option.state & (QStyle::State_Selected | QStyle::State_MouseOver)) {
+            painter->setPen(Qt::NoPen);
+            painter->setBrush(QColor(option.state & QStyle::State_Selected
+                                        ? "#e6f1ff" : "#f3f8fe"));
+            painter->drawRoundedRect(row, 5, 5);
+        }
+        if (index.data(Qt::UserRole).toBool()) {
+            painter->setPen(Qt::NoPen);
+            painter->setBrush(QColor("#1766b2"));
+            painter->drawEllipse(QPointF(row.left() + 13, row.center().y()), 3, 3);
+        }
+        // Reserve the same marker column for every row and every state.
+        const QRect textRect = row.adjusted(28, 0, -8, 0);
+        painter->setFont(option.font);
+        painter->setPen(QColor("#17202a"));
+        painter->drawText(textRect, Qt::AlignLeft | Qt::AlignVCenter,
+            option.fontMetrics.elidedText(index.data().toString(),
+                                          Qt::ElideRight, textRect.width()));
+        painter->restore();
+    }
+};
+
+class SatelliteRowDelegate final : public QStyledItemDelegate {
+public:
+    using QStyledItemDelegate::QStyledItemDelegate;
+
+    QSize sizeHint(const QStyleOptionViewItem& option,
+                   const QModelIndex& index) const override
+    {
+        QSize size = QStyledItemDelegate::sizeHint(option, index);
+        size.setHeight(qMax(size.height(), 36));
+        return size;
+    }
+
+    void paint(QPainter* painter, const QStyleOptionViewItem& option,
+               const QModelIndex& index) const override
+    {
+        painter->save();
+        painter->setRenderHint(QPainter::Antialiasing);
+        const QRect row = option.rect.adjusted(2, 2, -2, -2);
+        const bool selected = option.state & QStyle::State_Selected;
+        if (selected || (option.state & QStyle::State_MouseOver)) {
+            painter->setPen(Qt::NoPen);
+            painter->setBrush(selected ? QColor(QStringLiteral("#e6f1ff"))
+                                       : QColor(QStringLiteral("#f3f8fe")));
+            painter->drawRoundedRect(row, 5, 5);
+        }
+
+        const QString name = index.data(Qt::UserRole).toString();
+        const QString norad = index.data(Qt::UserRole + 1).toString();
+        const QFontMetrics metrics(option.font);
+        const int idWidth = qMax(66, metrics.horizontalAdvance(norad) + 12);
+        const QRect nameRect = row.adjusted(10, 0, -idWidth - 12, 0);
+        const QRect idRect(row.right() - idWidth - 8, row.top(),
+                           idWidth, row.height());
+        painter->setFont(option.font);
+        painter->setPen(QColor(QStringLiteral("#17202a")));
+        painter->drawText(nameRect, Qt::AlignLeft | Qt::AlignVCenter,
+                          metrics.elidedText(name, Qt::ElideRight, nameRect.width()));
+        QFont idFont = option.font;
+        idFont.setWeight(QFont::DemiBold);
+        painter->setFont(idFont);
+        painter->setPen(QColor(selected ? QStringLiteral("#245f9d")
+                                        : QStringLiteral("#617286")));
+        painter->drawText(idRect, Qt::AlignRight | Qt::AlignVCenter, norad);
+        painter->restore();
+    }
+};
+}
 
 CatalogDialog::CatalogDialog(SatelliteCatalog& catalog, QWidget* parent)
     : QDialog(parent), catalog_(catalog), entries_(catalog.entries())
 {
-    setWindowTitle(tr("管理卫星与频率"));
-    setMinimumSize(590, 420);
-    resize(650, 470);
+    setWindowTitle(tr("卫星与频率管理"));
+    for (const auto& entry : entries_)
+        initialNorads_.insert(entry.norad);
+    setMinimumSize(610, 430);
+    resize(680, 490);
     setStyleSheet(QStringLiteral(
         "QDialog { background:#f5f8fc; }"
         "QWidget { color:#17202a; }"
         "QGroupBox { background:white; border:1px solid #dce5ef; "
-        "border-radius:7px; margin-top:10px; padding-top:9px; font-weight:600; "
+        "border-radius:8px; margin:0; padding:0; font-weight:600; "
         "color:#17202a; }"
         "QLineEdit,QListWidget,QDoubleSpinBox { background:white; color:#17202a; "
-        "border:1px solid #cbd5e1; border-radius:5px; padding:4px; }"
-        "QPushButton { min-height:29px; border:1px solid #b8c9de; "
-        "border-radius:5px; background:#f7fbff; color:#17202a; "
-        "padding:0 10px; }"
-        "QPushButton:hover { background:#e5f1ff; }"));
+        "border:1px solid #cbd5e1; border-radius:5px; padding:5px; }"
+        "QListWidget { outline:0; }"
+        "QListWidget::item { padding:5px 7px; }"
+        "QListWidget::item:selected { background:#e6f1ff; color:#174f8c; }"
+        "QListWidget::item:hover { background:#f3f8fe; }"
+        "QPushButton { min-height:30px; border:1px solid #a9c9ef; "
+        "border-radius:6px; background:#edf5ff; color:#145ca8; "
+        "padding:0 11px; }"
+        "QPushButton:hover { background:#e2f0ff; }"
+        "QPushButton:disabled { color:#8495a8; background:#f5f7fa; "
+        "border-color:#dce5ef; }"));
 
     auto* outer = new QVBoxLayout(this);
     outer->setContentsMargins(12, 12, 12, 12);
     outer->setSpacing(9);
     auto* columns = new QHBoxLayout;
     columns->setSpacing(10);
-    auto* left = new QGroupBox(tr("卫星"), this);
+    auto* left = new QGroupBox(this);
     auto* leftLayout = new QVBoxLayout(left);
+    leftLayout->setContentsMargins(12, 12, 12, 12);
+    auto* leftTitle = new QLabel(tr("卫星"), left);
+    leftTitle->setStyleSheet(QStringLiteral("font-weight:600;"));
+    leftLayout->addWidget(leftTitle);
+    auto* listHeader = new QHBoxLayout;
+    listHeader->setContentsMargins(10, 0, 10, 0);
+    auto* nameHeader = new QLabel(tr("卫星名称"), left);
+    auto* noradHeader = new QLabel(QStringLiteral("NORAD"), left);
+    nameHeader->setStyleSheet(QStringLiteral("color:#617286; font-size:9pt;"));
+    noradHeader->setStyleSheet(QStringLiteral("color:#617286; font-size:9pt;"));
+    listHeader->addWidget(nameHeader, 1);
+    listHeader->addWidget(noradHeader, 0, Qt::AlignRight);
+    leftLayout->addLayout(listHeader);
     satellites_ = new QListWidget(left);
+    satellites_->setObjectName(QStringLiteral("satelliteList"));
+    satellites_->setItemDelegate(new SatelliteRowDelegate(satellites_));
+    satellites_->setMouseTracking(true);
+    satellites_->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     leftLayout->addWidget(satellites_, 1);
     auto* satelliteActions = new QHBoxLayout;
     auto* addSatelliteButton = new QPushButton(tr("新增"), left);
+    addSatelliteButton->setObjectName(QStringLiteral("addSatellite"));
     removeSatelliteButton_ = new QPushButton(tr("删除"), left);
     satelliteActions->addWidget(addSatelliteButton);
     satelliteActions->addWidget(removeSatelliteButton_);
     leftLayout->addLayout(satelliteActions);
     columns->addWidget(left, 2);
 
-    auto* right = new QGroupBox(tr("详细设置"), this);
+    auto* right = new QGroupBox(this);
+    details_ = right;
     auto* rightLayout = new QVBoxLayout(right);
+    rightLayout->setContentsMargins(12, 12, 12, 12);
+    auto* rightTitle = new QLabel(tr("详细设置"), right);
+    rightTitle->setStyleSheet(QStringLiteral("font-weight:600;"));
+    rightLayout->addWidget(rightTitle);
     auto* form = new QFormLayout;
     norad_ = new QLineEdit(right);
     name_ = new QLineEdit(right);
@@ -60,6 +179,10 @@ CatalogDialog::CatalogDialog(SatelliteCatalog& catalog, QWidget* parent)
     rightLayout->addLayout(form);
     rightLayout->addWidget(new QLabel(tr("下行频率"), right));
     frequencies_ = new QListWidget(right);
+    frequencies_->setObjectName(QStringLiteral("frequencyList"));
+    frequencies_->setItemDelegate(new FrequencyRowDelegate(frequencies_));
+    frequencies_->setMouseTracking(true);
+    frequencies_->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     rightLayout->addWidget(frequencies_, 1);
     auto* frequencyActions = new QHBoxLayout;
     frequency_ = new QDoubleSpinBox(right);
@@ -82,6 +205,11 @@ CatalogDialog::CatalogDialog(SatelliteCatalog& catalog, QWidget* parent)
         QDialogButtonBox::Save | QDialogButtonBox::Cancel, this);
     buttons->button(QDialogButtonBox::Save)->setText(tr("保存"));
     buttons->button(QDialogButtonBox::Cancel)->setText(tr("取消"));
+    buttons->button(QDialogButtonBox::Save)->setStyleSheet(QStringLiteral(
+        "QPushButton { background:#1766b2; border:1px solid #1766b2; "
+        "color:white; border-radius:6px; font-weight:600; min-width:76px; "
+        "min-height:30px; }"
+        "QPushButton:hover { background:#0f579e; }"));
     outer->addWidget(buttons);
 
     connect(satellites_, &QListWidget::currentRowChanged, this,
@@ -127,8 +255,11 @@ void CatalogDialog::refreshSatellites(int selectNorad)
     int selectedRow = entries_.isEmpty() ? -1 : 0;
     for (int row = 0; row < entries_.size(); ++row) {
         const SatelliteProfile& profile = entries_.at(row);
-        satellites_->addItem(QStringLiteral("%1  ·  %2")
-                                 .arg(profile.name).arg(profile.norad));
+        auto* item = new QListWidgetItem(profile.name, satellites_);
+        item->setData(Qt::UserRole, profile.name);
+        item->setData(Qt::UserRole + 1, QString::number(profile.norad));
+        item->setToolTip(QStringLiteral("%1 · NORAD %2")
+                             .arg(profile.name).arg(profile.norad));
         if (profile.norad == selectNorad)
             selectedRow = row;
     }
@@ -141,6 +272,7 @@ void CatalogDialog::refreshSatellites(int selectNorad)
 void CatalogDialog::refreshDetails()
 {
     SatelliteProfile* profile = currentProfile();
+    details_->setEnabled(profile != nullptr);
     norad_->setEnabled(profile != nullptr);
     name_->setEnabled(profile != nullptr);
     frequencies_->setEnabled(profile != nullptr);
@@ -157,49 +289,79 @@ void CatalogDialog::refreshFrequencies()
     if (!profile)
         return;
     for (qint64 hz : profile->frequenciesHz) {
-        frequencies_->addItem(QStringLiteral("%1  %2 MHz")
-                                  .arg(hz == profile->selectedHz
-                                           ? QStringLiteral("●")
-                                           : QStringLiteral("  "))
-                                  .arg(hz / 1e6, 0, 'f', 6));
+        auto* item = new QListWidgetItem(
+            QStringLiteral("%1 MHz").arg(hz / 1e6, 0, 'f', 6), frequencies_);
+        item->setData(Qt::UserRole, hz == profile->selectedHz);
+        item->setToolTip(item->text());
     }
-    if (frequencies_->count() > 0)
-        frequencies_->setCurrentRow(0);
+    if (frequencies_->count() > 0) {
+        const int selected = profile->frequenciesHz.indexOf(profile->selectedHz);
+        frequencies_->setCurrentRow(selected >= 0 ? selected : 0);
+    }
 }
 
 void CatalogDialog::addSatellite()
 {
     if (!applyDetails(activeRow_))
         return;
-    bool accepted = false;
-    const QString input = QInputDialog::getText(
-        this, tr("新增卫星"), tr("NORAD 编号"), QLineEdit::Normal, {}, &accepted);
-    if (!accepted)
-        return;
+    QDialog dialog(this);
+    dialog.setWindowTitle(tr("新增卫星"));
+    auto* layout = new QVBoxLayout(&dialog);
+    layout->setContentsMargins(18, 18, 18, 18);
+    layout->setSpacing(12);
+    auto* form = new QFormLayout;
+    form->setVerticalSpacing(10);
+    auto* name = new QLineEdit(&dialog);
+    name->setObjectName(QStringLiteral("satelliteName"));
+    name->setMaxLength(120);
+    name->setMinimumWidth(240);
+    auto* id = new QLineEdit(&dialog);
+    id->setObjectName(QStringLiteral("noradNumber"));
+    form->addRow(tr("卫星名称"), name);
+    form->addRow(tr("NORAD 编号"), id);
+    layout->addLayout(form);
+    auto* error = new QLabel(&dialog);
+    error->setStyleSheet(QStringLiteral("color:#b53636;"));
+    error->setWordWrap(true);
+    error->hide();
+    connect(name, &QLineEdit::textChanged, error, &QWidget::hide);
+    connect(id, &QLineEdit::textChanged, error, &QWidget::hide);
+    layout->addWidget(error);
+    auto* buttons = new QDialogButtonBox(
+        QDialogButtonBox::Save | QDialogButtonBox::Cancel, &dialog);
+    buttons->button(QDialogButtonBox::Save)->setText(tr("添加"));
+    buttons->button(QDialogButtonBox::Cancel)->setText(tr("取消"));
+    layout->addWidget(buttons);
     int norad = 0;
-    if (!SatelliteCatalog::parseNorad(input, &norad)) {
-        QMessageBox::warning(this, tr("编号无效"),
-                             tr("请输入十进制编号或标准的五字符 Alpha-5 编号。"));
-        return;
-    }
-    for (const SatelliteProfile& entry : entries_) {
-        if (entry.norad == norad) {
-            QMessageBox::warning(this, tr("卫星已存在"),
-                                 tr("该 NORAD 编号已在列表中。"));
+    connect(buttons, &QDialogButtonBox::accepted, &dialog, [&] {
+        QString message;
+        if (name->text().trimmed().isEmpty()) {
+            message = tr("请填写不超过 120 个字符的卫星名称。");
+            name->setFocus();
+        } else if (!SatelliteCatalog::parseNorad(id->text(), &norad)) {
+            message = tr("请输入十进制编号或标准的五字符 Alpha-5 编号。");
+            id->setFocus();
+        } else {
+            for (const auto& entry : entries_) {
+                if (entry.norad == norad) {
+                    message = tr("该 NORAD 编号已在列表中。");
+                    id->setFocus();
+                    break;
+                }
+            }
+        }
+        if (!message.isEmpty()) {
+            error->setText(message);
+            error->show();
             return;
         }
-    }
-    const QString name = QInputDialog::getText(
-        this, tr("新增卫星"), tr("卫星名称"), QLineEdit::Normal, {}, &accepted)
-                             .trimmed();
-    if (!accepted)
+        dialog.accept();
+    });
+    connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+    name->setFocus();
+    if (dialog.exec() != QDialog::Accepted)
         return;
-    if (name.isEmpty() || name.size() > 120) {
-        QMessageBox::warning(this, tr("名称不能为空"),
-                             tr("请填写不超过 120 个字符的卫星名称。"));
-        return;
-    }
-    entries_.append(SatelliteProfile{norad, name, {}, 0});
+    entries_.append(SatelliteProfile{norad, name->text().trimmed(), {}, 0});
     refreshSatellites(norad);
 }
 
@@ -239,8 +401,12 @@ bool CatalogDialog::applyDetails(int row)
     }
     profile->norad = norad;
     profile->name = name_->text().trimmed();
-    satellites_->item(row)->setText(QStringLiteral("%1  ·  %2")
-                                        .arg(profile->name).arg(profile->norad));
+    auto* item = satellites_->item(row);
+    item->setText(profile->name);
+    item->setData(Qt::UserRole, profile->name);
+    item->setData(Qt::UserRole + 1, QString::number(profile->norad));
+    item->setToolTip(QStringLiteral("%1 · NORAD %2")
+                         .arg(profile->name).arg(profile->norad));
     return true;
 }
 
@@ -291,6 +457,16 @@ void CatalogDialog::accept()
     if (!applyDetails(satellites_->currentRow()))
         return;
     const QList<SatelliteProfile> previous = catalog_.entries();
+    // A download can finish while this modal editor is open. Keep newly
+    // discovered satellites without undoing explicit edits or deletions.
+    QSet<int> editedNorads;
+    for (const auto& entry : entries_)
+        editedNorads.insert(entry.norad);
+    for (const auto& entry : previous) {
+        if (!initialNorads_.contains(entry.norad) &&
+            !editedNorads.contains(entry.norad))
+            entries_.append(entry);
+    }
     catalog_.setEntries(entries_);
     QString error;
     if (!catalog_.save(&error)) {

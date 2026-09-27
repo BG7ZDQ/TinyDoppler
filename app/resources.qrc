@@ -2,7 +2,6 @@
   <qresource prefix="/tiny">
     <file alias="icon.png">../assets/icons/win98_doppler.png</file>
     <file alias="arrow.png">../assets/ui/combo_arrow.png</file>
-    <file alias="default_satellites.json">../assets/default_satellites.json</file>
     <file alias="tiny_en.qm">../assets/translations/tiny_en.qm</file>
     <file alias="tiny_ja.qm">../assets/translations/tiny_ja.qm</file>
   </qresource>

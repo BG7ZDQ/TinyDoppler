@@ -55,7 +55,7 @@
 <context>
     <name>CatalogDialog</name>
     <message>
-        <source>管理卫星与频率</source>
+        <source>卫星与频率管理</source>
         <translation>衛星と周波数の管理</translation>
     </message>
     <message>
@@ -188,8 +188,8 @@
         <translation>未設定</translation>
     </message>
     <message>
-        <source>管理卫星与频率</source>
-        <translation>衛星と周波数の管理</translation>
+        <source>卫星与频率管理&gt;</source>
+        <translation>衛星と周波数の管理 &gt;</translation>
     </message>
     <message>
         <source>星历</source>
@@ -200,12 +200,8 @@
         <translation>軌道データを更新</translation>
     </message>
     <message>
-        <source>打开目录</source>
-        <translation>フォルダーを開く</translation>
-    </message>
-    <message>
-        <source>来源设置</source>
-        <translation>取得元を設定</translation>
+        <source>星历管理</source>
+        <translation>軌道データ管理</translation>
     </message>
     <message>
         <source>无法保存频率</source>
@@ -222,10 +218,6 @@
     <message>
         <source>下载的星历无法解析，请检查来源。</source>
         <translation>ダウンロードした軌道データを解析できません。取得元を確認してください。</translation>
-    </message>
-    <message>
-        <source>星历来源</source>
-        <translation>軌道データの取得元</translation>
     </message>
     <message>
         <source>每行填写一个下载网址。</source>
@@ -346,6 +338,29 @@
     <message>
         <source>海拔</source>
         <translation>標高</translation>
+    </message>
+</context>
+<context>
+    <name>SatelliteTrackerDialog</name>
+    <message>
+        <source>正在查询 %1 的星历…</source>
+        <translation>%1 の軌道データを検索中…</translation>
+    </message>
+    <message>
+        <source>已添加 %1 的星历</source>
+        <translation>%1 の軌道データを追加しました</translation>
+    </message>
+    <message>
+        <source>未找到 %1 的星历，可手动添加来源</source>
+        <translation>%1 の軌道データが見つかりません。取得元を手動で追加できます</translation>
+    </message>
+    <message>
+        <source>%1 的星历查询失败，可手动添加来源</source>
+        <translation>%1 の軌道データを取得できません。取得元を手動で追加できます</translation>
+    </message>
+    <message>
+        <source>请添加卫星或下载星历</source>
+        <translation>衛星の追加または軌道データの取得を行ってください</translation>
     </message>
 </context>
 </TS>

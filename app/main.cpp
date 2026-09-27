@@ -6,6 +6,7 @@
 #include <QCommandLineParser>
 #include <QCoreApplication>
 #include <QFont>
+#include <QFontDatabase>
 #include <QGuiApplication>
 #include <QIcon>
 #include <QLocale>
@@ -14,21 +15,68 @@
 #include <QTimer>
 
 namespace {
-void installTranslation(QApplication& application, QTranslator& translator)
+QString uiLanguage(const QApplication& application)
 {
     const QStringList arguments = application.arguments();
-    const bool chinese = arguments.contains(QStringLiteral("--language=zh")) ||
-        (!arguments.contains(QStringLiteral("--language=en")) &&
-         !arguments.contains(QStringLiteral("--language=ja")) &&
-         QLocale::system().language() == QLocale::Chinese);
+    for (int i = 1; i < arguments.size(); ++i) {
+        QString value;
+        if (arguments.at(i).startsWith(QStringLiteral("--language=")))
+            value = arguments.at(i).mid(11);
+        else if (arguments.at(i) == QStringLiteral("--language") && i + 1 < arguments.size())
+            value = arguments.at(++i);
+        if (value == QStringLiteral("zh") || value == QStringLiteral("en") ||
+            value == QStringLiteral("ja"))
+            return value;
+    }
+    if (QLocale::system().language() == QLocale::Chinese)
+        return QStringLiteral("zh");
+    if (QLocale::system().language() == QLocale::Japanese)
+        return QStringLiteral("ja");
+    return QStringLiteral("en");
+}
+
+void installTranslation(QApplication& application, QTranslator& translator)
+{
+    const QString language = uiLanguage(application);
+    const bool chinese = language == QStringLiteral("zh");
     if (chinese)
         return;
-    const bool japanese = arguments.contains(QStringLiteral("--language=ja")) ||
-        (!arguments.contains(QStringLiteral("--language=en")) &&
-         QLocale::system().language() == QLocale::Japanese);
+    const bool japanese = language == QStringLiteral("ja");
     if (translator.load(japanese ? QStringLiteral(":/tiny/tiny_ja.qm")
                                  : QStringLiteral(":/tiny/tiny_en.qm")))
         application.installTranslator(&translator);
+}
+
+void configureUiFont(QApplication& application)
+{
+    const QString language = uiLanguage(application);
+    const bool chinese = language == QStringLiteral("zh");
+    const bool japanese = language == QStringLiteral("ja");
+#ifdef Q_OS_WIN
+    const QStringList preferred = chinese
+        ? QStringList{QStringLiteral("Microsoft YaHei UI"), QStringLiteral("Microsoft YaHei"), QStringLiteral("Segoe UI")}
+        : japanese
+            ? QStringList{QStringLiteral("Yu Gothic UI"), QStringLiteral("Meiryo"), QStringLiteral("Segoe UI")}
+            : QStringList{QStringLiteral("Segoe UI"), QStringLiteral("Microsoft YaHei UI")};
+#else
+    const QStringList preferred = chinese
+        ? QStringList{QStringLiteral("Noto Sans CJK SC"), QStringLiteral("Noto Sans"), QStringLiteral("DejaVu Sans")}
+        : japanese
+            ? QStringList{QStringLiteral("Noto Sans CJK JP"), QStringLiteral("Noto Sans"), QStringLiteral("DejaVu Sans")}
+            : QStringList{QStringLiteral("Noto Sans"), QStringLiteral("DejaVu Sans")};
+#endif
+    QFont font = application.font();
+    const QFontDatabase database;
+    for (const QString& family : preferred) {
+        if (database.hasFamily(family)) {
+            font.setFamily(family);
+            break;
+        }
+    }
+    font.setPointSizeF(10.0);
+    font.setStyleStrategy(static_cast<QFont::StyleStrategy>(
+        QFont::PreferAntialias | QFont::PreferQuality));
+    application.setFont(font);
 }
 }
 
@@ -44,14 +92,14 @@ int main(int argc, char* argv[])
     QTranslator translator;
     installTranslation(application, translator);
     application.setWindowIcon(QIcon(QStringLiteral(":/tiny/icon.png")));
-    QFont font = application.font();
-    font.setPointSize(10);
-    application.setFont(font);
+    configureUiFont(application);
     QCoreApplication::setOrganizationName(QStringLiteral("BG7ZDQ"));
     QCoreApplication::setApplicationName(QStringLiteral("TinyDoppler"));
 
     QCommandLineParser parser;
     parser.addHelpOption();
+    const QCommandLineOption integrated(QStringLiteral("integrated"),
+        QStringLiteral("Use the receiver launcher ground station settings"));
     const QCommandLineOption longitude(QStringLiteral("longitude"),
                                        QStringLiteral("Observer longitude"),
                                        QStringLiteral("degrees"), QStringLiteral("0"));
@@ -63,7 +111,7 @@ int main(int argc, char* argv[])
                                       QStringLiteral("metres"), QStringLiteral("0"));
     const QCommandLineOption satellite(QStringLiteral("satellite"),
                                        QStringLiteral("Preferred satellite"),
-                                       QStringLiteral("name"), QStringLiteral("ASRTU-1"));
+                                       QStringLiteral("name"));
     const QCommandLineOption screenshot(QStringLiteral("screenshot"),
                                         QStringLiteral("Save a window screenshot"),
                                         QStringLiteral("path"));
@@ -75,10 +123,20 @@ int main(int argc, char* argv[])
                                       QStringLiteral("UI language"),
                                       QStringLiteral("code"));
     parser.addOptions({longitude, latitude, altitude, satellite, screenshot,
-                       screenshotCatalog, language});
+                       screenshotCatalog, language, integrated});
     parser.process(application);
 
-    QSettings settings(QStringLiteral("TinyDoppler"), QStringLiteral("Tracker"));
+    bool integratedMode = parser.isSet(integrated);
+#ifdef TINY_DOPPLER_RECEIVER_BUILD
+    integratedMode = true;
+#endif
+    // Keep the receiver's existing profile; standalone use has its own
+    // catalog, settings and orbit cache, without inheriting receiver presets.
+    if (!integratedMode)
+        QCoreApplication::setApplicationName(QStringLiteral("TinyDopplerStandalone"));
+    QSettings settings(QStringLiteral("TinyDoppler"),
+                       integratedMode ? QStringLiteral("Tracker")
+                                      : QStringLiteral("StandaloneTracker"));
     const double longitudeDeg = parser.isSet(longitude)
                                     ? parser.value(longitude).toDouble()
                                     : settings.value(QStringLiteral("longitude"), 0.0).toDouble();
@@ -106,7 +164,8 @@ int main(int argc, char* argv[])
     }
 
     SatelliteTrackerDialog window(longitudeDeg, latitudeDeg, altitudeMeters,
-                                  parser.value(satellite));
+                                  parser.value(satellite), nullptr,
+                                  integratedMode);
     window.show();
     if (parser.isSet(screenshot)) {
         const QString path = parser.value(screenshot);

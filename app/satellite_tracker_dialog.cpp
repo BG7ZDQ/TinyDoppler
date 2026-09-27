@@ -4,7 +4,6 @@
 #include <QComboBox>
 #include <QCoreApplication>
 #include <QDateTime>
-#include <QDesktopServices>
 #include <QDialogButtonBox>
 #include <QDir>
 #include <QDoubleSpinBox>
@@ -33,6 +32,7 @@
 #include <QTimer>
 #include <QTextOption>
 #include <QUrl>
+#include <QUrlQuery>
 #include <QVBoxLayout>
 
 #include <algorithm>
@@ -59,9 +59,37 @@ QString normalizedSatellite(QString value)
 
 QString cachePath()
 {
-    const QString root = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
+    const QString overridePath = QString::fromLocal8Bit(qgetenv("TINY_DOPPLER_CONFIG_DIR"));
+    const QString root = QDir::isAbsolutePath(overridePath) ? overridePath :
+        QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
     QDir().mkpath(root);
     return QDir(root).filePath(QStringLiteral("ephemerides.json"));
+}
+
+QNetworkRequest orbitRequest(const QUrl& url)
+{
+    QNetworkRequest request(url);
+    request.setAttribute(QNetworkRequest::RedirectPolicyAttribute,
+                         QNetworkRequest::NoLessSafeRedirectPolicy);
+    request.setAttribute(QNetworkRequest::Http2AllowedAttribute, false);
+    request.setRawHeader("User-Agent", "TinyDoppler/1.0");
+    request.setTransferTimeout(15000);
+    return request;
+}
+
+void boundReply(QNetworkReply* reply)
+{
+    auto* deadline = new QTimer(reply);
+    deadline->setSingleShot(true);
+    QObject::connect(deadline, &QTimer::timeout, reply, &QNetworkReply::abort);
+    QObject::connect(reply, &QNetworkReply::finished, deadline, &QTimer::stop);
+    deadline->start(15000);
+    QObject::connect(reply, &QNetworkReply::downloadProgress, reply,
+                     [reply](qint64 received, qint64 total) {
+        constexpr qint64 maxBytes = 16 * 1024 * 1024;
+        if (received > maxBytes || total > maxBytes)
+            reply->abort();
+    });
 }
 
 double jsonNumber(const QJsonObject& object, const QString& key, bool* ok)
@@ -80,16 +108,16 @@ double jsonNumber(const QJsonObject& object, const QString& key, bool* ok)
 
 SatelliteTrackerDialog::SatelliteTrackerDialog(
     double longitudeDeg, double latitudeDeg, double altitudeMeters,
-    const QString& preferredSatellite, QWidget* parent)
+    const QString& preferredSatellite, QWidget* parent, bool integrated)
     : QDialog(parent), longitudeDeg_(longitudeDeg), latitudeDeg_(latitudeDeg),
-      altitudeMeters_(altitudeMeters), preferredSatellite_(preferredSatellite)
+      altitudeMeters_(altitudeMeters), preferredSatellite_(preferredSatellite),
+      integrated_(integrated)
 {
     setWindowFlags(Qt::Window | Qt::WindowTitleHint | Qt::WindowSystemMenuHint |
                    Qt::WindowMinimizeButtonHint | Qt::WindowMaximizeButtonHint |
                    Qt::WindowCloseButtonHint);
     setWindowTitle(QStringLiteral("Tiny Doppler"));
     setWindowIcon(QIcon(QStringLiteral(":/tiny/icon.png")));
-    setAttribute(Qt::WA_DeleteOnClose, true);
     buildUi();
     QString catalogError;
     if (!catalog_.load(&catalogError)) {
@@ -104,12 +132,12 @@ SatelliteTrackerDialog::SatelliteTrackerDialog(
     loadSettings();
     refreshSatelliteChoices();
     adjustSize();
-    const QSize comfortable(500, 445);
-    setMinimumSize(comfortable);
-    resize(comfortable);
+    setMinimumSize(500, 530);
+    resize(550, 560);
 
 #ifdef Q_OS_WIN
-    mappingHandle_ = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_READWRITE,
+    if (!QStandardPaths::isTestModeEnabled())
+        mappingHandle_ = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_READWRITE,
                                         0, 64, L"Local\\ASRTU_DOPPLER_CONTROL_V1");
     if (mappingHandle_)
         mappingView_ = static_cast<unsigned char*>(
@@ -124,15 +152,27 @@ SatelliteTrackerDialog::SatelliteTrackerDialog(
     QFile cache(cachePath());
     if (cache.open(QIODevice::ReadOnly)) {
         const QJsonDocument saved = QJsonDocument::fromJson(cache.readAll());
-        QList<QByteArray> savedSources;
-        for (const QJsonValue& value : saved.array()) {
-            if (value.isString())
-                savedSources.append(value.toString().toUtf8());
+        if (saved.isArray()) {
+            int index = 0;
+            for (const auto& value : saved.array()) {
+                if (value.isString())
+                    cachedSources_.insert(QStringLiteral("legacy:%1").arg(index++),
+                                          value.toString().toUtf8());
+            }
+        } else if (saved.object().value(QStringLiteral("schemaVersion")).toInt() == 2) {
+            const auto payloads = saved.object().value(QStringLiteral("sources")).toObject();
+            for (auto it = payloads.begin(); it != payloads.end(); ++it) {
+                if (it.value().isString())
+                    cachedSources_.insert(it.key(), it.value().toString().toUtf8());
+            }
         }
-        if (installEphemerides(savedSources))
+        if (installEphemerides(cachedSources_.values()))
             status_->setText(tr("已载入本地星历，正在更新…"));
     }
-    QTimer::singleShot(0, this, [this] { updateTle(); });
+    if (!sourceUrls_.isEmpty())
+        QTimer::singleShot(0, this, [this] { updateTle(); });
+    else
+        status_->setText(tr("没有星历来源"));
 }
 
 SatelliteTrackerDialog::~SatelliteTrackerDialog()
@@ -152,11 +192,14 @@ void SatelliteTrackerDialog::buildUi()
     setStyleSheet(QStringLiteral(
         "QDialog { background:#f5f8fc; font-size:10pt; }"
         "QWidget { color:#17202a; }"
-        "QGroupBox { background:white; border:1px solid #dce5ef; border-radius:8px; "
-        "margin-top:10px; padding-top:10px; font-weight:600; color:#17202a; }"
-        "QComboBox,QDoubleSpinBox,QPlainTextEdit { background:white; color:#17202a; "
-        "border:1px solid #cbd5e1; "
-        "border-radius:5px; padding:5px; }"
+        "QGroupBox { background:white; border:1px solid #dce5ef; "
+        "border-radius:8px; }"
+        "QLabel#sectionTitle { color:#17202a; font-weight:600; }"
+        "QComboBox,QDoubleSpinBox { background:white; color:#17202a; "
+        "border:1px solid #cbd5e1; min-height:25px; "
+        "border-radius:5px; padding:3px 5px; }"
+        "QPlainTextEdit { background:white; color:#17202a; "
+        "border:1px solid #cbd5e1; border-radius:5px; padding:5px; }"
         "QComboBox QAbstractItemView { background:#ffffff; color:#17202a; "
         "selection-background-color:#dceeff; selection-color:#17202a; "
         "outline:0; }"
@@ -170,10 +213,15 @@ void SatelliteTrackerDialog::buildUi()
         "QLabel#value { color:#075db3; font-weight:600; }"));
     auto* root = new QVBoxLayout(this);
     root->setContentsMargins(16, 14, 16, 14);
-    root->setSpacing(10);
+    root->setSpacing(18);
 
-    auto* receivedBox = new QGroupBox(QCoreApplication::translate("ASRTU", "实时跟踪数据"), this);
+    auto* receivedBox = new QGroupBox(this);
     auto* receivedLayout = new QVBoxLayout(receivedBox);
+    receivedLayout->setContentsMargins(14, 12, 14, 12);
+    auto* receivedTitle = new QLabel(
+        QCoreApplication::translate("ASRTU", "实时跟踪数据"), receivedBox);
+    receivedTitle->setObjectName(QStringLiteral("sectionTitle"));
+    receivedLayout->addWidget(receivedTitle);
     received_ = new QLabel(tr("等待星历数据"), receivedBox);
     received_->setWordWrap(false);
     received_->setAlignment(Qt::AlignCenter);
@@ -196,9 +244,18 @@ void SatelliteTrackerDialog::buildUi()
     receivedLayout->addLayout(values);
     root->addWidget(receivedBox);
 
-    auto* selectionBox = new QGroupBox(QCoreApplication::translate("ASRTU", "卫星与频率"), this);
+    auto* selectionBox = new QGroupBox(this);
+    selectionBox->setMinimumHeight(195);
     auto* selection = new QFormLayout(selectionBox);
+    selection->setContentsMargins(14, 12, 14, 12);
+    selection->setHorizontalSpacing(12);
+    selection->setVerticalSpacing(9);
+    auto* selectionTitle = new QLabel(
+        QCoreApplication::translate("ASRTU", "卫星与频率"), selectionBox);
+    selectionTitle->setObjectName(QStringLiteral("sectionTitle"));
+    selection->addRow(selectionTitle);
     satellite_ = new QComboBox(selectionBox);
+    satellite_->setPlaceholderText(tr("未设置"));
     frequencyPreset_ = new QComboBox(selectionBox);
     frequencyMHz_ = new QDoubleSpinBox(selectionBox);
     frequencyMHz_->setRange(0.0, 10000.0);
@@ -210,22 +267,24 @@ void SatelliteTrackerDialog::buildUi()
     selection->addRow(QCoreApplication::translate("ASRTU", "卫星"), satellite_);
     selection->addRow(QCoreApplication::translate("ASRTU", "频率预设"), frequencyPreset_);
     selection->addRow(QCoreApplication::translate("ASRTU", "标称下行"), frequencyMHz_);
-    auto* manageButton = new QPushButton(tr("管理卫星与频率"), selectionBox);
+    auto* manageButton = new QPushButton(tr("卫星与频率管理>"), selectionBox);
     selection->addRow(QString(), manageButton);
     root->addWidget(selectionBox);
 
-    auto* sourceBox = new QGroupBox(tr("星历"), this);
+    auto* sourceBox = new QGroupBox(this);
     auto* sourceLayout = new QVBoxLayout(sourceBox);
+    sourceLayout->setContentsMargins(14, 12, 14, 12);
+    auto* sourceTitle = new QLabel(tr("星历"), sourceBox);
+    sourceTitle->setObjectName(QStringLiteral("sectionTitle"));
+    sourceLayout->addWidget(sourceTitle);
     auto* sourceActions = new QHBoxLayout;
     status_ = new QLabel(QCoreApplication::translate("ASRTU", "等待更新"), sourceBox);
-    status_->setWordWrap(false);
+    status_->setWordWrap(true);
     updateButton_ = new QPushButton(tr("更新星历"), sourceBox);
-    auto* openTleButton = new QPushButton(tr("打开目录"), sourceBox);
-    auto* sourceButton = new QPushButton(tr("来源设置"), sourceBox);
+    auto* sourceButton = new QPushButton(tr("星历管理"), sourceBox);
     sourceLayout->addWidget(status_);
     sourceActions->addStretch(1);
     sourceActions->addWidget(sourceButton);
-    sourceActions->addWidget(openTleButton);
     sourceActions->addWidget(updateButton_);
     sourceLayout->addLayout(sourceActions);
     root->addWidget(sourceBox);
@@ -235,21 +294,19 @@ void SatelliteTrackerDialog::buildUi()
     station_->setStyleSheet(QStringLiteral("color:#667788;"));
     refreshStationLabel();
     stationRow->addWidget(station_, 1);
-    auto* editStationButton = new QPushButton(tr("设置地面站"), this);
-    editStationButton->setStyleSheet(QStringLiteral(
-        "QPushButton { min-height:25px; padding:0 8px; }"));
-    stationRow->addWidget(editStationButton);
+    if (!integrated_) {
+        auto* editStationButton = new QPushButton(tr("设置地面站"), this);
+        editStationButton->setStyleSheet(QStringLiteral(
+            "QPushButton { min-height:25px; padding:0 8px; }"));
+        stationRow->addWidget(editStationButton);
+        connect(editStationButton, &QPushButton::clicked, this,
+                [this] { editStation(); });
+    }
     root->addLayout(stationRow);
 
     connect(updateButton_, &QPushButton::clicked, this, [this] { updateTle(); });
     connect(manageButton, &QPushButton::clicked, this, [this] { editCatalog(); });
-    connect(editStationButton, &QPushButton::clicked, this,
-            [this] { editStation(); });
     connect(sourceButton, &QPushButton::clicked, this, [this] { editSources(); });
-    connect(openTleButton, &QPushButton::clicked, this, [] {
-        QDesktopServices::openUrl(
-            QUrl::fromLocalFile(QFileInfo(cachePath()).absolutePath()));
-    });
     connect(satellite_, qOverload<int>(&QComboBox::currentIndexChanged),
             this, [this] {
                 refreshFrequencyPresets(true);
@@ -287,20 +344,18 @@ void SatelliteTrackerDialog::buildUi()
 
 void SatelliteTrackerDialog::loadSettings()
 {
-    QSettings settings(QStringLiteral("TinyDoppler"), QStringLiteral("Tracker"));
+    QSettings settings(QStandardPaths::isTestModeEnabled() ? QSettings::IniFormat
+                                                         : QSettings::NativeFormat,
+                       QSettings::UserScope, QStringLiteral("TinyDoppler"),
+                       integrated_ ? QStringLiteral("Tracker")
+                                   : QStringLiteral("StandaloneTracker"));
+    sourceUrls_ = settings.value(QStringLiteral("tle_sources"),
+                                SatelliteCatalog::defaultSources()).toStringList();
+    preferredSatellite_ = settings.value(QStringLiteral("satellite"),
+                                         preferredSatellite_).toString();
+    if (!integrated_)
+        return;
     QSettings legacy(QStringLiteral("ASRTU"), QStringLiteral("AstroSeriesTracker"));
-    const QStringList defaultSources{
-        QStringLiteral("https://8104.satellites.ac.cn/latest.tle"),
-        QStringLiteral("https://celestrak.org/NORAD/elements/gp.php?CATNR=61781&FORMAT=TLE"),
-        QStringLiteral("https://celestrak.org/NORAD/elements/gp.php?CATNR=100465&FORMAT=JSON")
-    };
-    sourceUrls_ =
-        settings.value(QStringLiteral("tle_sources"),
-                       legacy.value(QStringLiteral("tle_sources"), defaultSources))
-            .toStringList();
-    preferredSatellite_ = settings.value(
-        QStringLiteral("satellite"),
-        legacy.value(QStringLiteral("satellite"), preferredSatellite_)).toString();
 
     // The legacy tracker stored one global frequency. Migrate it only to
     // the satellite selected there, never to every newly selected satellite.
@@ -327,7 +382,11 @@ void SatelliteTrackerDialog::loadSettings()
 
 void SatelliteTrackerDialog::saveSettings()
 {
-    QSettings settings(QStringLiteral("TinyDoppler"), QStringLiteral("Tracker"));
+    QSettings settings(QStandardPaths::isTestModeEnabled() ? QSettings::IniFormat
+                                                         : QSettings::NativeFormat,
+                       QSettings::UserScope, QStringLiteral("TinyDoppler"),
+                       integrated_ ? QStringLiteral("Tracker")
+                                   : QStringLiteral("StandaloneTracker"));
     settings.setValue(QStringLiteral("tle_sources"), sourceUrls_);
     settings.setValue(QStringLiteral("satellite"), satellite_->currentText());
     settings.setValue(QStringLiteral("longitude"), longitudeDeg_);
@@ -388,14 +447,21 @@ void SatelliteTrackerDialog::editStation()
 
 void SatelliteTrackerDialog::updateTle()
 {
+    if (downloading_ || lookupReply_)
+        return;
+    if (sourceUrls_.isEmpty()) {
+        editSources();
+        if (sourceUrls_.isEmpty())
+            return;
+    }
     saveSettings();
     downloadSources_ = sourceUrls_;
     for (QString& source : downloadSources_)
         source = source.trimmed();
     downloadIndex_ = 0;
-    downloadedSources_.clear();
     successfulDownloads_ = 0;
     downloadErrors_.clear();
+    downloading_ = true;
     updateButton_->setEnabled(false);
     downloadNextSource();
 }
@@ -410,13 +476,8 @@ void SatelliteTrackerDialog::downloadNextSource()
     status_->setText(tr("正在更新星历（%1/%2）")
                          .arg(downloadIndex_)
                          .arg(downloadSources_.size()));
-    QNetworkRequest request{QUrl(source)};
-    request.setAttribute(QNetworkRequest::RedirectPolicyAttribute,
-                         QNetworkRequest::NoLessSafeRedirectPolicy);
-    request.setAttribute(QNetworkRequest::Http2AllowedAttribute, false);
-    request.setRawHeader("User-Agent", "TinyDoppler/1.0");
-    request.setTransferTimeout(15000);
-    QNetworkReply* reply = network_->get(request);
+    QNetworkReply* reply = network_->get(orbitRequest(QUrl(source)));
+    boundReply(reply);
     connect(reply, &QNetworkReply::finished, this, [this, reply, source] {
         const QByteArray data = reply->readAll();
         QVector<Satellite> parsed;
@@ -427,7 +488,7 @@ void SatelliteTrackerDialog::downloadNextSource()
         const bool networkSucceeded = reply->error() == QNetworkReply::NoError;
         reply->deleteLater();
         if (success) {
-            downloadedSources_.append(data);
+            cachedSources_.insert(source, data);
             ++successfulDownloads_;
         } else {
             downloadErrors_.append(QStringLiteral("%1: %2")
@@ -441,8 +502,10 @@ void SatelliteTrackerDialog::downloadNextSource()
 
 void SatelliteTrackerDialog::finishDownloads()
 {
+    downloading_ = false;
     updateButton_->setEnabled(true);
-    if (successfulDownloads_ == 0 || !installEphemerides(downloadedSources_)) {
+    QTimer::singleShot(0, this, [this] { startNextEphemerisLookup(); });
+    if (successfulDownloads_ == 0 || !installEphemerides(cachedSources_.values())) {
         status_->setText(satellites_.isEmpty()
                              ? tr("星历更新失败")
                              : tr("更新失败，继续使用本地星历"));
@@ -452,17 +515,7 @@ void SatelliteTrackerDialog::finishDownloads()
                                  : downloadErrors_.join(QLatin1Char('\n')));
         return;
     }
-    QJsonArray savedSources;
-    for (const QByteArray& source : downloadedSources_)
-        savedSources.append(QString::fromUtf8(source));
-    QSaveFile cache(cachePath());
-    if (cache.open(QIODevice::WriteOnly)) {
-        const QByteArray serialized = QJsonDocument(savedSources).toJson();
-        if (cache.write(serialized) != serialized.size() || !cache.commit())
-            QMessageBox::warning(this, tr("无法保存星历"), cache.errorString());
-    } else {
-        QMessageBox::warning(this, tr("无法保存星历"), cache.errorString());
-    }
+    saveEphemerisCache();
     status_->setText(tr("星历更新完成：%1/%2 个来源")
                          .arg(successfulDownloads_)
                          .arg(downloadSources_.size()));
@@ -478,6 +531,87 @@ void SatelliteTrackerDialog::finishDownloads()
         QMessageBox::warning(this, tr("星历更新失败"),
                              tr("星历中没有找到指定的卫星。"));
     }
+}
+
+void SatelliteTrackerDialog::saveEphemerisCache()
+{
+    QJsonObject sources;
+    for (auto it = cachedSources_.cbegin(); it != cachedSources_.cend(); ++it)
+        sources.insert(it.key(), QString::fromUtf8(it.value()));
+    const QByteArray bytes = QJsonDocument(QJsonObject{
+        {QStringLiteral("schemaVersion"), 2},
+        {QStringLiteral("sources"), sources}
+    }).toJson();
+    QSaveFile cache(cachePath());
+    if (!cache.open(QIODevice::WriteOnly) ||
+        cache.write(bytes) != bytes.size() || !cache.commit())
+        QMessageBox::warning(this, tr("无法保存星历"), cache.errorString());
+}
+
+void SatelliteTrackerDialog::queueEphemerisLookup(int norad)
+{
+    if (norad <= 0 || pendingLookups_.contains(norad) || !catalog_.find(norad))
+        return;
+    pendingLookups_.insert(norad);
+    lookupQueue_.enqueue(norad);
+    startNextEphemerisLookup();
+}
+
+void SatelliteTrackerDialog::startNextEphemerisLookup()
+{
+    if (downloading_ || lookupReply_)
+        return;
+    while (!lookupQueue_.isEmpty() && !catalog_.find(lookupQueue_.head()))
+        pendingLookups_.remove(lookupQueue_.dequeue());
+    if (lookupQueue_.isEmpty())
+        return;
+    const int norad = lookupQueue_.dequeue();
+    const QString name = catalog_.find(norad)->name;
+    const QString source = QStringLiteral(
+        "https://celestrak.org/NORAD/elements/gp.php?CATNR=%1&FORMAT=JSON").arg(norad);
+    status_->setText(tr("正在查询 %1 的星历…").arg(name));
+    updateButton_->setEnabled(false);
+    QNetworkReply* reply = network_->get(orbitRequest(QUrl(source)));
+    lookupReply_ = reply;
+    boundReply(reply);
+    connect(reply, &QNetworkReply::finished, this, [this, reply, norad, name, source] {
+        const QByteArray data = reply->readAll();
+        const bool networkOk = reply->error() == QNetworkReply::NoError;
+        QString error;
+        const bool found = networkOk && validateEphemeris(data, norad, &error);
+        lookupReply_ = nullptr;
+        pendingLookups_.remove(norad);
+        reply->deleteLater();
+        updateButton_->setEnabled(true);
+        // The user may have removed or renumbered the satellite in the meantime.
+        if (catalog_.find(norad)) {
+            if (found) {
+                bool hasSource = false;
+                for (const auto& existing : sourceUrls_) {
+                    const QUrl url(existing);
+                    if (url.host().compare(QStringLiteral("celestrak.org"),
+                                           Qt::CaseInsensitive) == 0 &&
+                        url.path() == QStringLiteral("/NORAD/elements/gp.php") &&
+                        QUrlQuery(url).queryItemValue(QStringLiteral("CATNR")).toInt() == norad)
+                        hasSource = true;
+                }
+                if (!hasSource)
+                    sourceUrls_.append(source);
+                cachedSources_.insert(source, data);
+                installEphemerides(cachedSources_.values());
+                saveEphemerisCache();
+                saveSettings();
+                status_->setText(tr("已添加 %1 的星历").arg(name));
+            } else {
+                status_->setText((networkOk
+                    ? tr("未找到 %1 的星历，可手动添加来源")
+                    : tr("%1 的星历查询失败，可手动添加来源")).arg(name));
+            }
+        } else {
+            status_->setText(QCoreApplication::translate("ASRTU", "等待更新"));
+        }
+        QTimer::singleShot(0, this, [this] { startNextEphemerisLookup(); });
+    });
 }
 
 bool SatelliteTrackerDialog::validateEphemeris(const QByteArray& payload,
@@ -648,8 +782,14 @@ bool SatelliteTrackerDialog::installEphemerides(const QList<QByteArray>& sources
     }
     if (combined.isEmpty())
         return false;
+    QList<SatelliteProfile> discovered;
+    for (const auto& sat : combined)
+        discovered.append({sat.tle.norad_id, sat.name, {}, 0});
+    QString catalogError;
+    if (!catalog_.mergeDiscovered(discovered, &catalogError))
+        QMessageBox::warning(this, tr("无法保存卫星设置"), catalogError);
     satellites_ = combined;
-    updateTracking();
+    refreshSatelliteChoices();
     return true;
 }
 
@@ -724,20 +864,33 @@ void SatelliteTrackerDialog::refreshSatelliteChoices(int preferredNorad)
 void SatelliteTrackerDialog::editCatalog()
 {
     const int selectedNorad = satellite_->currentData().toInt();
+    QSet<int> previous;
+    for (const auto& entry : catalog_.entries())
+        previous.insert(entry.norad);
     CatalogDialog dialog(catalog_, this);
-    if (dialog.exec() == QDialog::Accepted)
+    if (dialog.exec() == QDialog::Accepted) {
         refreshSatelliteChoices(selectedNorad);
+        for (const auto& entry : catalog_.entries()) {
+            if (!previous.contains(entry.norad) &&
+                std::none_of(satellites_.cbegin(), satellites_.cend(),
+                             [&entry](const Satellite& sat) {
+                                 return sat.tle.norad_id == entry.norad;
+                             }))
+                queueEphemerisLookup(entry.norad);
+        }
+    }
 }
 
 void SatelliteTrackerDialog::editSources()
 {
     QDialog dialog(this);
-    dialog.setWindowTitle(tr("星历来源"));
+    dialog.setWindowTitle(tr("星历管理"));
     dialog.setMinimumSize(480, 300);
     dialog.resize(550, 330);
     auto* layout = new QVBoxLayout(&dialog);
     layout->addWidget(new QLabel(tr("每行填写一个下载网址。"), &dialog));
     auto* editor = new QPlainTextEdit(&dialog);
+    const QStringList originalSources = sourceUrls_;
     editor->setPlainText(sourceUrls_.join(QLatin1Char('\n')));
     editor->setLineWrapMode(QPlainTextEdit::WidgetWidth);
     editor->setWordWrapMode(QTextOption::WrapAnywhere);
@@ -747,35 +900,37 @@ void SatelliteTrackerDialog::editSources()
     buttons->button(QDialogButtonBox::Save)->setText(tr("保存"));
     buttons->button(QDialogButtonBox::Cancel)->setText(tr("取消"));
     layout->addWidget(buttons);
-    connect(buttons, &QDialogButtonBox::accepted, &dialog,
-            &QDialog::accept);
+    connect(buttons, &QDialogButtonBox::accepted, &dialog, [&] {
+        const QStringList lines = editor->toPlainText().split(
+            QRegularExpression(QStringLiteral("[\r\n]+")), Qt::SkipEmptyParts);
+        QStringList validated;
+        for (const QString& line : lines) {
+            const QString urlText = line.trimmed();
+            const QUrl url(urlText);
+            if (!url.isValid() ||
+                (url.scheme() != QStringLiteral("https") &&
+                 url.scheme() != QStringLiteral("http")) || url.host().isEmpty()) {
+                QMessageBox::warning(&dialog, tr("网址无效"),
+                                     tr("请检查星历来源：%1").arg(urlText));
+                return;
+            }
+            if (!validated.contains(urlText))
+                validated.append(urlText);
+        }
+        // Keep successful background discoveries that arrived while editing.
+        for (const auto& source : sourceUrls_) {
+            if (!originalSources.contains(source) && !validated.contains(source))
+                validated.append(source);
+        }
+        sourceUrls_ = validated;
+        saveSettings();
+        if (sourceUrls_.isEmpty())
+            status_->setText(tr("没有星历来源"));
+        dialog.accept();
+    });
     connect(buttons, &QDialogButtonBox::rejected, &dialog,
             &QDialog::reject);
-    if (dialog.exec() != QDialog::Accepted)
-        return;
-    const QStringList lines = editor->toPlainText().split(
-        QRegularExpression(QStringLiteral("[\r\n]+")), Qt::SkipEmptyParts);
-    QStringList validated;
-    for (const QString& line : lines) {
-        const QString urlText = line.trimmed();
-        const QUrl url(urlText);
-        if (!url.isValid() ||
-            (url.scheme() != QStringLiteral("https") &&
-             url.scheme() != QStringLiteral("http")) || url.host().isEmpty()) {
-            QMessageBox::warning(this, tr("网址无效"),
-                                 tr("请检查星历来源：%1").arg(urlText));
-            return;
-        }
-        if (!validated.contains(urlText))
-            validated.append(urlText);
-    }
-    if (validated.isEmpty()) {
-        QMessageBox::warning(this, tr("没有星历来源"),
-                             tr("请至少填写一个下载网址。"));
-        return;
-    }
-    sourceUrls_ = validated;
-    saveSettings();
+    dialog.exec();
 }
 
 void SatelliteTrackerDialog::updateTracking()
@@ -789,7 +944,8 @@ void SatelliteTrackerDialog::updateTracking()
     if (!profile || profile->selectedHz == 0 ||
         found == satellites_.cend()) {
         publishDoppler(0, 0, false);
-        received_->setText(profile && profile->selectedHz == 0
+        received_->setText(!profile ? tr("请添加卫星或下载星历") :
+                           profile->selectedHz == 0
                                ? tr("请设置下行频率")
                                : tr("等待所选卫星的星历"));
         azimuth_->setText(QStringLiteral("--"));

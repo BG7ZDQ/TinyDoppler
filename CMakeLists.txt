@@ -76,4 +76,21 @@ if(BUILD_TESTING)
         target_compile_options(tiny_ephemeris_test PRIVATE /utf-8)
     endif()
     add_test(NAME tiny_ephemeris_test COMMAND tiny_ephemeris_test)
+    add_executable(tiny_workflow_test tests/workflow_test.cpp
+        app/satellite_tracker_dialog.cpp app/satellite_tracker_dialog.h
+        app/satellite_catalog.cpp app/satellite_catalog.h
+        app/catalog_dialog.cpp app/catalog_dialog.h app/resources.qrc)
+    target_include_directories(tiny_workflow_test PRIVATE app third_party/sgp4)
+    target_link_libraries(tiny_workflow_test PRIVATE tiny_sgp4
+        Qt5::Core Qt5::Gui Qt5::Widgets Qt5::Network)
+    if(WIN32)
+        target_compile_definitions(tiny_workflow_test PRIVATE
+            NOMINMAX WIN32_LEAN_AND_MEAN)
+    endif()
+    if(MSVC)
+        target_compile_options(tiny_workflow_test PRIVATE /utf-8)
+    endif()
+    add_test(NAME tiny_workflow_test COMMAND tiny_workflow_test)
+    set_tests_properties(tiny_workflow_test PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 30)
 endif()

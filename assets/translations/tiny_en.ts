@@ -55,8 +55,8 @@
 <context>
     <name>CatalogDialog</name>
     <message>
-        <source>管理卫星与频率</source>
-        <translation>Manage satellites and frequencies</translation>
+        <source>卫星与频率管理</source>
+        <translation>Satellites and frequencies</translation>
     </message>
     <message>
         <source>卫星</source>
@@ -188,8 +188,8 @@ Check the file and try again.</translation>
         <translation>Not set</translation>
     </message>
     <message>
-        <source>管理卫星与频率</source>
-        <translation>Manage satellites and frequencies</translation>
+        <source>卫星与频率管理&gt;</source>
+        <translation>Satellites and frequencies &gt;</translation>
     </message>
     <message>
         <source>星历</source>
@@ -200,12 +200,8 @@ Check the file and try again.</translation>
         <translation>Update orbit data</translation>
     </message>
     <message>
-        <source>打开目录</source>
-        <translation>Open folder</translation>
-    </message>
-    <message>
-        <source>来源设置</source>
-        <translation>Sources</translation>
+        <source>星历管理</source>
+        <translation>Orbit data management</translation>
     </message>
     <message>
         <source>无法保存频率</source>
@@ -222,10 +218,6 @@ Check the file and try again.</translation>
     <message>
         <source>下载的星历无法解析，请检查来源。</source>
         <translation>Downloaded orbit data could not be parsed. Check the sources.</translation>
-    </message>
-    <message>
-        <source>星历来源</source>
-        <translation>Orbit data sources</translation>
     </message>
     <message>
         <source>每行填写一个下载网址。</source>
@@ -346,6 +338,29 @@ Check the file and try again.</translation>
     <message>
         <source>海拔</source>
         <translation>Altitude</translation>
+    </message>
+</context>
+<context>
+    <name>SatelliteTrackerDialog</name>
+    <message>
+        <source>正在查询 %1 的星历…</source>
+        <translation>Looking up orbit data for %1…</translation>
+    </message>
+    <message>
+        <source>已添加 %1 的星历</source>
+        <translation>Orbit data added for %1</translation>
+    </message>
+    <message>
+        <source>未找到 %1 的星历，可手动添加来源</source>
+        <translation>No orbit data found for %1. You can add a source manually.</translation>
+    </message>
+    <message>
+        <source>%1 的星历查询失败，可手动添加来源</source>
+        <translation>Orbit lookup failed for %1. You can add a source manually.</translation>
+    </message>
+    <message>
+        <source>请添加卫星或下载星历</source>
+        <translation>Add a satellite or download orbit data</translation>
     </message>
 </context>
 </TS>
