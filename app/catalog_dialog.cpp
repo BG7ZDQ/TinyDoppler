@@ -158,6 +158,7 @@ CatalogDialog::CatalogDialog(SatelliteCatalog& catalog, QWidget* parent)
     auto* addSatelliteButton = new QPushButton(tr("新增"), left);
     addSatelliteButton->setObjectName(QStringLiteral("addSatellite"));
     removeSatelliteButton_ = new QPushButton(tr("删除"), left);
+    removeSatelliteButton_->setObjectName(QStringLiteral("removeSatellite"));
     satelliteActions->addWidget(addSatelliteButton);
     satelliteActions->addWidget(removeSatelliteButton_);
     leftLayout->addLayout(satelliteActions);

@@ -5,6 +5,7 @@
 #include <QCommandLineOption>
 #include <QCommandLineParser>
 #include <QCoreApplication>
+#include <QDir>
 #include <QFont>
 #include <QFontDatabase>
 #include <QGuiApplication>
@@ -28,6 +29,12 @@ QString uiLanguage(const QApplication& application)
             value == QStringLiteral("ja"))
             return value;
     }
+    QSettings installed(QDir(QCoreApplication::applicationDirPath()).filePath(
+                            QStringLiteral("ui-language.ini")), QSettings::IniFormat);
+    const QString saved = installed.value(QStringLiteral("UI/Language")).toString();
+    if (saved == QStringLiteral("zh") || saved == QStringLiteral("en") ||
+        saved == QStringLiteral("ja"))
+        return saved;
     if (QLocale::system().language() == QLocale::Chinese)
         return QStringLiteral("zh");
     if (QLocale::system().language() == QLocale::Japanese)

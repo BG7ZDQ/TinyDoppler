@@ -142,7 +142,7 @@ struct TrackerTestAccess {
         });
         QString error;
         assert(window.catalog_.save(&error));
-        window.cachedSources_.insert("previous-source", orbit(61781));
+        window.cachedSources_.insert("legacy:0", orbit(61781));
         assert(window.installEphemerides(window.cachedSources_.values()));
         window.refreshSatelliteChoices(61781);
         assert(window.frequencyMHz_->value() == 436.21);
@@ -154,21 +154,49 @@ struct TrackerTestAccess {
         network->responses[100465] = {orbit(100465)};
         window.queueEphemerisLookup(100465);
         window.queueEphemerisLookup(100465);
+        assert(window.sourceUrls_.size() == 1);
+        assert(window.cachedSources_.size() == 1); // Reply has not arrived.
+        QSettings persisted(QSettings::IniFormat, QSettings::UserScope,
+                            "TinyDoppler", "StandaloneTracker");
+        assert(persisted.value("tle_sources").toStringList() == window.sourceUrls_);
         awaitCondition([&] { return window.pendingLookups_.isEmpty(); });
         assert(network->requests.size() == 1);
         assert(QUrlQuery(network->requests.first()).queryItemValue("FORMAT") == "JSON");
         assert(window.sourceUrls_.size() == 1);
         assert(window.satellites_.size() == 2);
-        assert(window.cachedSources_.contains("previous-source"));
+        assert(window.cachedSources_.contains("legacy:0"));
         assert(window.catalog_.find(100465)->name == "Custom JAMX name");
         assert(window.catalog_.find(61781)->selectedHz == 436210000);
 
         network->responses[123456] = {{}, QNetworkReply::TimeoutError};
         network->responses[22222] = {orbit(61781)};
+        QStringList warnings;
+        QTimer closeWarnings;
+        QObject::connect(&closeWarnings, &QTimer::timeout, [&] {
+            for (QWidget* top : QApplication::topLevelWidgets()) {
+                if (auto* warning = qobject_cast<QMessageBox*>(top)) {
+                    if (warning->isVisible()) {
+                        warnings.append(warning->text());
+                        warning->accept();
+                    }
+                }
+            }
+        });
+        closeWarnings.start(10);
         for (int id : {100469, 123456, 22222})
             window.queueEphemerisLookup(id);
+        assert(window.sourceUrls_.size() == 4); // Includes not-yet-started requests.
         awaitCondition([&] { return window.pendingLookups_.isEmpty(); });
-        assert(window.sourceUrls_.size() == 1);
+        assert(window.sourceUrls_.size() == 4);
+        assert(warnings.size() == 3);
+        for (int index = 0; index < 3; ++index) {
+            const int id = QList<int>{100469, 123456, 22222}.at(index);
+            assert(warnings.at(index).contains(QString("CATNR=%1").arg(id)));
+            assert(!window.cachedSources_.contains(window.celestrakSource(id)));
+        }
+        assert(warnings.at(1).contains("Test network failure"));
+        persisted.sync();
+        assert(persisted.value("tle_sources").toStringList() == window.sourceUrls_);
         assert(window.catalog_.find(100469) && window.catalog_.find(123456));
         assert(window.satellites_.size() == 2);
 
@@ -179,7 +207,8 @@ struct TrackerTestAccess {
         window.catalog_.setEntries(entries);
         awaitCondition([&] { return window.pendingLookups_.isEmpty(); });
         assert(!window.catalog_.find(44444));
-        assert(window.sourceUrls_.size() == 1);
+        assert(window.sourceUrls_.size() == 5);
+        assert(warnings.size() == 3); // No warning for a satellite removed in flight.
 
         window.downloading_ = true;
         const int beforeQueue = network->requests.size();
@@ -189,7 +218,7 @@ struct TrackerTestAccess {
         window.downloading_ = false;
         window.startNextEphemerisLookup();
         awaitCondition([&] { return window.pendingLookups_.isEmpty(); });
-        assert(window.sourceUrls_.size() == 2);
+        assert(window.sourceUrls_.size() == 6);
         assert(window.satellites_.size() == 3);
 
         // A partial refresh retains cached data from the failing source.
@@ -197,18 +226,11 @@ struct TrackerTestAccess {
             "https://celestrak.org/NORAD/elements/gp.php?CATNR=100465&FORMAT=JSON",
             "https://celestrak.org/NORAD/elements/gp.php?CATNR=33333&FORMAT=JSON"};
         network->responses[33333] = {{}, QNetworkReply::TimeoutError};
-        QTimer closeWarnings;
-        QObject::connect(&closeWarnings, &QTimer::timeout, [] {
-            for (QWidget* top : QApplication::topLevelWidgets())
-                if (auto* warning = qobject_cast<QMessageBox*>(top))
-                    warning->accept();
-        });
-        closeWarnings.start(10);
         window.updateTle();
         awaitCondition([&] { return !window.downloading_; });
         closeWarnings.stop();
         assert(window.satellites_.size() == 3);
-        assert(window.cachedSources_.contains("previous-source"));
+        assert(window.cachedSources_.contains("legacy:0"));
 
         QTimer::singleShot(0, &window, [&] {
             auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
@@ -219,6 +241,83 @@ struct TrackerTestAccess {
         });
         window.editSources();
         assert(window.sourceUrls_.contains("https://example.org/discovered.json"));
+        // Removed source caches (including legacy, unattributed caches) must
+        // not resurrect an ISS that is no longer in the user's catalog.
+        const QString issSource =
+            "https://celestrak.org/NORAD/elements/gp.php?CATNR=25544&FORMAT=JSON";
+        window.cachedSources_.insert(issSource, orbit(25544));
+        window.cachedSources_.insert("legacy:iss", orbit(25544));
+        window.installEphemerides(window.cachedSources_.values());
+        assert(!window.catalog_.find(25544));
+        window.pruneEphemerisCache();
+        assert(!window.cachedSources_.contains(issSource));
+
+        // A genuinely new satellite from a fresh download is still discovered.
+        window.installEphemerides(window.cachedSources_.values(), {orbit(25544)});
+        assert(window.catalog_.find(25544));
+        QTimer::singleShot(0, &window, [&] {
+            auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+            assert(dialog);
+            auto* list = dialog->findChild<QListWidget*>("satelliteList");
+            for (int row = 0; row < list->count(); ++row) {
+                if (list->item(row)->data(Qt::UserRole + 1).toInt() == 25544)
+                    list->setCurrentRow(row);
+            }
+            QTimer::singleShot(0, dialog, [] {
+                auto* question = qobject_cast<QMessageBox*>(QApplication::activeModalWidget());
+                assert(question);
+                question->button(QMessageBox::Yes)->click();
+            });
+            dialog->findChild<QPushButton*>("removeSatellite")->click();
+            dialog->findChild<QDialogButtonBox*>()->button(QDialogButtonBox::Save)->click();
+        });
+        window.editCatalog();
+        assert(!window.catalog_.find(25544));
+        assert(window.dismissedNorads_.contains(25544));
+        window.installEphemerides(window.cachedSources_.values(), {orbit(25544)});
+        assert(!window.catalog_.find(25544));
+        window.saveEphemerisCache();
+        {
+            SatelliteTrackerDialog reopened(0, 0, 0, {});
+            assert(!reopened.catalog_.find(25544));
+            assert(reopened.dismissedNorads_.contains(25544));
+        }
+        // Re-adding a deleted satellite must query even with a legacy orbit
+        // already loaded. Otherwise it never acquires a refreshable source.
+        assert(!window.sourceUrls_.contains(issSource));
+        const int requestsBeforeReadd = network->requests.size();
+        network->responses[25544] = {orbit(25544)};
+        QTimer::singleShot(0, &window, [&] {
+            auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+            assert(dialog);
+            QTimer::singleShot(0, dialog, [] {
+                auto* entry = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+                assert(entry);
+                entry->findChild<QLineEdit*>("satelliteName")->setText("ISS");
+                entry->findChild<QLineEdit*>("noradNumber")->setText("25544");
+                entry->findChild<QDialogButtonBox*>()->button(QDialogButtonBox::Save)->click();
+            });
+            dialog->findChild<QPushButton*>("addSatellite")->click();
+            dialog->findChild<QDialogButtonBox*>()->button(QDialogButtonBox::Save)->click();
+        });
+        window.editCatalog();
+        assert(window.sourceUrls_.contains(issSource)); // Before the response.
+        awaitCondition([&] { return window.pendingLookups_.isEmpty(); });
+        assert(network->requests.size() == requestsBeforeReadd + 1);
+        assert(network->requests.last() == QUrl(issSource));
+        assert(window.catalog_.find(25544));
+        assert(!window.dismissedNorads_.contains(25544));
+        assert(window.sourceUrls_.count(issSource) == 1);
+        assert(window.cachedSources_.value(issSource) == orbit(25544));
+        // Saving an unchanged catalog neither queries again nor duplicates URLs.
+        QTimer::singleShot(0, &window, [] {
+            auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+            assert(dialog);
+            dialog->findChild<QDialogButtonBox*>()->button(QDialogButtonBox::Save)->click();
+        });
+        window.editCatalog();
+        assert(network->requests.size() == requestsBeforeReadd + 1);
+        assert(window.sourceUrls_.count(issSource) == 1);
         capture(&window, "tracking.png");
     }
 };

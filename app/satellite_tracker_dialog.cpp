@@ -166,6 +166,7 @@ SatelliteTrackerDialog::SatelliteTrackerDialog(
                     cachedSources_.insert(it.key(), it.value().toString().toUtf8());
             }
         }
+        pruneEphemerisCache();
         if (installEphemerides(cachedSources_.values()))
             status_->setText(tr("已载入本地星历，正在更新…"));
     }
@@ -351,6 +352,12 @@ void SatelliteTrackerDialog::loadSettings()
                                    : QStringLiteral("StandaloneTracker"));
     sourceUrls_ = settings.value(QStringLiteral("tle_sources"),
                                 SatelliteCatalog::defaultSources()).toStringList();
+    for (const auto& value : settings.value(QStringLiteral("dismissed_norads")).toStringList()) {
+        bool ok = false;
+        const int norad = value.toInt(&ok);
+        if (ok && norad > 0)
+            dismissedNorads_.insert(norad);
+    }
     preferredSatellite_ = settings.value(QStringLiteral("satellite"),
                                          preferredSatellite_).toString();
     if (!integrated_)
@@ -388,6 +395,10 @@ void SatelliteTrackerDialog::saveSettings()
                        integrated_ ? QStringLiteral("Tracker")
                                    : QStringLiteral("StandaloneTracker"));
     settings.setValue(QStringLiteral("tle_sources"), sourceUrls_);
+    QStringList dismissed;
+    for (int norad : dismissedNorads_)
+        dismissed.append(QString::number(norad));
+    settings.setValue(QStringLiteral("dismissed_norads"), dismissed);
     settings.setValue(QStringLiteral("satellite"), satellite_->currentText());
     settings.setValue(QStringLiteral("longitude"), longitudeDeg_);
     settings.setValue(QStringLiteral("latitude"), latitudeDeg_);
@@ -461,6 +472,8 @@ void SatelliteTrackerDialog::updateTle()
     downloadIndex_ = 0;
     successfulDownloads_ = 0;
     downloadErrors_.clear();
+    freshSources_.clear();
+    pruneEphemerisCache();
     downloading_ = true;
     updateButton_->setEnabled(false);
     downloadNextSource();
@@ -487,10 +500,11 @@ void SatelliteTrackerDialog::downloadNextSource()
         const QString networkError = reply->errorString();
         const bool networkSucceeded = reply->error() == QNetworkReply::NoError;
         reply->deleteLater();
-        if (success) {
+        if (success && sourceUrls_.contains(source)) {
             cachedSources_.insert(source, data);
+            freshSources_.insert(source, data);
             ++successfulDownloads_;
-        } else {
+        } else if (!success) {
             downloadErrors_.append(QStringLiteral("%1: %2")
                                        .arg(source, networkSucceeded
                                                         ? parseError
@@ -505,7 +519,14 @@ void SatelliteTrackerDialog::finishDownloads()
     downloading_ = false;
     updateButton_->setEnabled(true);
     QTimer::singleShot(0, this, [this] { startNextEphemerisLookup(); });
-    if (successfulDownloads_ == 0 || !installEphemerides(cachedSources_.values())) {
+    pruneEphemerisCache();
+    QList<QByteArray> discoveries;
+    for (auto it = freshSources_.cbegin(); it != freshSources_.cend(); ++it) {
+        if (sourceUrls_.contains(it.key()))
+            discoveries.append(it.value());
+    }
+    if (successfulDownloads_ == 0 ||
+        !installEphemerides(cachedSources_.values(), discoveries)) {
         status_->setText(satellites_.isEmpty()
                              ? tr("星历更新失败")
                              : tr("更新失败，继续使用本地星历"));
@@ -533,6 +554,19 @@ void SatelliteTrackerDialog::finishDownloads()
     }
 }
 
+void SatelliteTrackerDialog::pruneEphemerisCache()
+{
+    for (auto it = cachedSources_.begin(); it != cachedSources_.end();) {
+        // Legacy caches have no source URL. Keep them for offline tracking,
+        // but cached data must never rediscover deleted satellites.
+        if (!it.key().startsWith(QStringLiteral("legacy:")) &&
+            !sourceUrls_.contains(it.key()))
+            it = cachedSources_.erase(it);
+        else
+            ++it;
+    }
+}
+
 void SatelliteTrackerDialog::saveEphemerisCache()
 {
     QJsonObject sources;
@@ -548,10 +582,28 @@ void SatelliteTrackerDialog::saveEphemerisCache()
         QMessageBox::warning(this, tr("无法保存星历"), cache.errorString());
 }
 
+QString SatelliteTrackerDialog::celestrakSource(int norad) const
+{
+    for (const auto& source : sourceUrls_) {
+        const QUrl url(source);
+        if (url.host().compare(QStringLiteral("celestrak.org"), Qt::CaseInsensitive) == 0 &&
+            url.path() == QStringLiteral("/NORAD/elements/gp.php") &&
+            QUrlQuery(url).queryItemValue(QStringLiteral("CATNR")).toInt() == norad)
+            return source;
+    }
+    return QStringLiteral(
+        "https://celestrak.org/NORAD/elements/gp.php?CATNR=%1&FORMAT=JSON").arg(norad);
+}
+
 void SatelliteTrackerDialog::queueEphemerisLookup(int norad)
 {
     if (norad <= 0 || pendingLookups_.contains(norad) || !catalog_.find(norad))
         return;
+    const QString source = celestrakSource(norad);
+    if (!sourceUrls_.contains(source))
+        sourceUrls_.append(source);
+    // The source is visible and persistent even before a queued request starts.
+    saveSettings();
     pendingLookups_.insert(norad);
     lookupQueue_.enqueue(norad);
     startNextEphemerisLookup();
@@ -567,8 +619,12 @@ void SatelliteTrackerDialog::startNextEphemerisLookup()
         return;
     const int norad = lookupQueue_.dequeue();
     const QString name = catalog_.find(norad)->name;
-    const QString source = QStringLiteral(
-        "https://celestrak.org/NORAD/elements/gp.php?CATNR=%1&FORMAT=JSON").arg(norad);
+    const QString source = celestrakSource(norad);
+    if (!sourceUrls_.contains(source)) {
+        pendingLookups_.remove(norad);
+        QTimer::singleShot(0, this, [this] { startNextEphemerisLookup(); });
+        return;
+    }
     status_->setText(tr("正在查询 %1 的星历…").arg(name));
     updateButton_->setEnabled(false);
     QNetworkReply* reply = network_->get(orbitRequest(QUrl(source)));
@@ -579,33 +635,26 @@ void SatelliteTrackerDialog::startNextEphemerisLookup()
         const bool networkOk = reply->error() == QNetworkReply::NoError;
         QString error;
         const bool found = networkOk && validateEphemeris(data, norad, &error);
+        const QString reason = networkOk ? error : reply->errorString();
         lookupReply_ = nullptr;
         pendingLookups_.remove(norad);
         reply->deleteLater();
         updateButton_->setEnabled(true);
         // The user may have removed or renumbered the satellite in the meantime.
-        if (catalog_.find(norad)) {
+        if (catalog_.find(norad) && sourceUrls_.contains(source)) {
             if (found) {
-                bool hasSource = false;
-                for (const auto& existing : sourceUrls_) {
-                    const QUrl url(existing);
-                    if (url.host().compare(QStringLiteral("celestrak.org"),
-                                           Qt::CaseInsensitive) == 0 &&
-                        url.path() == QStringLiteral("/NORAD/elements/gp.php") &&
-                        QUrlQuery(url).queryItemValue(QStringLiteral("CATNR")).toInt() == norad)
-                        hasSource = true;
-                }
-                if (!hasSource)
-                    sourceUrls_.append(source);
                 cachedSources_.insert(source, data);
-                installEphemerides(cachedSources_.values());
+                installEphemerides(cachedSources_.values(), {data});
                 saveEphemerisCache();
                 saveSettings();
                 status_->setText(tr("已添加 %1 的星历").arg(name));
             } else {
-                status_->setText((networkOk
-                    ? tr("未找到 %1 的星历，可手动添加来源")
-                    : tr("%1 的星历查询失败，可手动添加来源")).arg(name));
+                status_->setText(tr("%1 的星历下载失败，来源已保留").arg(name));
+                QMessageBox warning(QMessageBox::Warning, tr("星历更新失败"),
+                    tr("无法下载 %1 的星历。\n来源已保留，可点击“更新星历”重试。\n\n%2\n%3")
+                        .arg(name, source, reason), QMessageBox::Ok, this);
+                warning.setTextFormat(Qt::PlainText);
+                warning.exec();
             }
         } else {
             status_->setText(QCoreApplication::translate("ASRTU", "等待更新"));
@@ -761,7 +810,8 @@ bool SatelliteTrackerDialog::parseEphemeris(const QByteArray& payload,
     return !parsed->isEmpty();
 }
 
-bool SatelliteTrackerDialog::installEphemerides(const QList<QByteArray>& sources)
+bool SatelliteTrackerDialog::installEphemerides(const QList<QByteArray>& sources,
+                                               const QList<QByteArray>& discoveries)
 {
     QVector<Satellite> combined;
     for (const QByteArray& source : sources) {
@@ -780,17 +830,23 @@ bool SatelliteTrackerDialog::installEphemerides(const QList<QByteArray>& sources
                 *existing = sat;
         }
     }
-    if (combined.isEmpty())
-        return false;
     QList<SatelliteProfile> discovered;
-    for (const auto& sat : combined)
-        discovered.append({sat.tle.norad_id, sat.name, {}, 0});
+    for (const auto& payload : discoveries) {
+        QVector<Satellite> parsed;
+        QString error;
+        if (!parseEphemeris(payload, &parsed, &error))
+            continue;
+        for (const auto& sat : parsed) {
+            if (!dismissedNorads_.contains(sat.tle.norad_id))
+                discovered.append({sat.tle.norad_id, sat.name, {}, 0});
+        }
+    }
     QString catalogError;
     if (!catalog_.mergeDiscovered(discovered, &catalogError))
         QMessageBox::warning(this, tr("无法保存卫星设置"), catalogError);
     satellites_ = combined;
     refreshSatelliteChoices();
-    return true;
+    return !combined.isEmpty();
 }
 
 void SatelliteTrackerDialog::refreshFrequencyPresets(bool chooseDefault)
@@ -869,13 +925,20 @@ void SatelliteTrackerDialog::editCatalog()
         previous.insert(entry.norad);
     CatalogDialog dialog(catalog_, this);
     if (dialog.exec() == QDialog::Accepted) {
+        for (int norad : previous) {
+            if (!catalog_.find(norad))
+                dismissedNorads_.insert(norad);
+        }
+        for (const auto& entry : catalog_.entries()) {
+            if (!previous.contains(entry.norad))
+                dismissedNorads_.remove(entry.norad);
+        }
+        saveSettings();
         refreshSatelliteChoices(selectedNorad);
         for (const auto& entry : catalog_.entries()) {
-            if (!previous.contains(entry.norad) &&
-                std::none_of(satellites_.cbegin(), satellites_.cend(),
-                             [&entry](const Satellite& sat) {
-                                 return sat.tle.norad_id == entry.norad;
-                             }))
+            // A cached orbit does not imply a configured download source.
+            // Always refresh newly saved satellites, including explicit re-adds.
+            if (!previous.contains(entry.norad))
                 queueEphemerisLookup(entry.norad);
         }
     }
@@ -923,6 +986,9 @@ void SatelliteTrackerDialog::editSources()
                 validated.append(source);
         }
         sourceUrls_ = validated;
+        pruneEphemerisCache();
+        installEphemerides(cachedSources_.values());
+        saveEphemerisCache();
         saveSettings();
         if (sourceUrls_.isEmpty())
             status_->setText(tr("没有星历来源"));

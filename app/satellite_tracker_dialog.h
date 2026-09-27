@@ -44,9 +44,12 @@ private:
     void downloadNextSource();
     void finishDownloads();
     void saveEphemerisCache();
+    void pruneEphemerisCache();
     void queueEphemerisLookup(int norad);
+    QString celestrakSource(int norad) const;
     void startNextEphemerisLookup();
-    bool installEphemerides(const QList<QByteArray>& sources);
+    bool installEphemerides(const QList<QByteArray>& sources,
+                            const QList<QByteArray>& discoveries = {});
     static bool parseEphemeris(const QByteArray& payload,
                                QVector<Satellite>* parsed, QString* error);
     void refreshFrequencyPresets(bool chooseDefault);
@@ -72,6 +75,8 @@ private:
     int successfulDownloads_ = 0;
     QStringList downloadErrors_;
     QMap<QString, QByteArray> cachedSources_;
+    QMap<QString, QByteArray> freshSources_;
+    QSet<int> dismissedNorads_;
     QQueue<int> lookupQueue_;
     QSet<int> pendingLookups_;
     bool downloading_ = false;

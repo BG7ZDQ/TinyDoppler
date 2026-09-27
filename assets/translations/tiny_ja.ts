@@ -363,4 +363,23 @@
         <translation>衛星の追加または軌道データの取得を行ってください</translation>
     </message>
 </context>
+<context>
+    <name>SatelliteTrackerDialog</name>
+    <message>
+        <source>%1 的星历下载失败，来源已保留</source>
+        <translation>%1 の軌道データを取得できません。取得元は保持されています</translation>
+    </message>
+    <message>
+        <source>无法下载 %1 的星历。
+来源已保留，可点击“更新星历”重试。
+
+%2
+%3</source>
+        <translation>%1 の軌道データを取得できませんでした。
+取得元は保持されています。「軌道データを更新」で再試行できます。
+
+%2
+%3</translation>
+    </message>
+</context>
 </TS>

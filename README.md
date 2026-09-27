@@ -17,9 +17,10 @@ tuning and I/Q delivery require the Windows plugin.
    frequencies, or download orbit data to discover satellites automatically.
    The NORAD field accepts decimal catalog numbers and standard
    five-character Alpha-5 values such as `A0465` (= 100465).
-   Saving a newly added satellite starts a background CelesTrak lookup. If
-   matching, valid orbit data is found, its JSON source is added automatically.
-   A failed lookup leaves the satellite intact so a source can be added manually.
+   Saving a newly added satellite immediately saves its CelesTrak source and
+   starts a background download, even if a cached orbit already exists.
+   A failed download shows a warning with the source and error; the satellite
+   and source remain available so **Update orbit data** can retry.
 3. Add download URLs in **Orbit data management**, then use **Update orbit data**.
    The application shows an error dialog if an orbit source
    cannot be parsed. A previously valid local cache remains available.

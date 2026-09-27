@@ -363,4 +363,23 @@ Check the file and try again.</translation>
         <translation>Add a satellite or download orbit data</translation>
     </message>
 </context>
+<context>
+    <name>SatelliteTrackerDialog</name>
+    <message>
+        <source>%1 的星历下载失败，来源已保留</source>
+        <translation>Orbit download failed for %1; source retained</translation>
+    </message>
+    <message>
+        <source>无法下载 %1 的星历。
+来源已保留，可点击“更新星历”重试。
+
+%2
+%3</source>
+        <translation>Could not download orbit data for %1.
+The source has been kept. Click “Update orbit data” to retry.
+
+%2
+%3</translation>
+    </message>
+</context>
 </TS>
