@@ -22,7 +22,8 @@ int main(int argc, char* argv[])
 
     SatelliteCatalog fresh;
     QString freshError;
-    assert(fresh.load(&freshError));
+    const bool freshLoaded = fresh.load(&freshError);
+    assert(freshLoaded);
 #ifdef TINY_DOPPLER_RECEIVER_BUILD
     assert(fresh.entries().size() == 3);
     assert(fresh.find(61781) && fresh.find(100465) && fresh.find(100469));
@@ -36,24 +37,31 @@ int main(int argc, char* argv[])
 #endif
 
     QFile oldCatalog(SatelliteCatalog::filePath());
-    assert(oldCatalog.open(QIODevice::WriteOnly));
+    const bool opened = oldCatalog.open(QIODevice::WriteOnly);
+    assert(opened);
     const QByteArray oldConfiguration = R"({
       "schemaVersion":1, "catalogRevision":2,
       "satellites":[{"norad":98247,"name":"BY04",
         "frequenciesHz":[437443000,437500000],"selectedHz":437500000}]
     })";
-    assert(oldCatalog.write(oldConfiguration) == oldConfiguration.size());
+    const qint64 written = oldCatalog.write(oldConfiguration);
+    assert(written == oldConfiguration.size());
     oldCatalog.close();
 
     int number = 0;
-    assert(SatelliteCatalog::parseNorad(QStringLiteral("A0123"), &number));
+    const bool alphaParsed = SatelliteCatalog::parseNorad(QStringLiteral("A0123"), &number);
+    assert(alphaParsed);
     assert(number == 100123);
-    assert(SatelliteCatalog::parseNorad(QStringLiteral("100465"), &number));
+    const bool decimalParsed = SatelliteCatalog::parseNorad(QStringLiteral("100465"), &number);
+    assert(decimalParsed);
     assert(number == 100465);
-    assert(SatelliteCatalog::parseNorad(QStringLiteral("a0465"), &number));
+    const bool lowerParsed = SatelliteCatalog::parseNorad(QStringLiteral("a0465"), &number);
+    assert(lowerParsed);
     assert(number == 100465);
-    assert(!SatelliteCatalog::parseNorad(QStringLiteral("A01234"), &number));
-    assert(!SatelliteCatalog::parseNorad(QStringLiteral("I0000"), &number));
+    const bool invalidLengthParsed = SatelliteCatalog::parseNorad(QStringLiteral("A01234"), &number);
+    const bool invalidLetterParsed = SatelliteCatalog::parseNorad(QStringLiteral("I0000"), &number);
+    assert(!invalidLengthParsed);
+    assert(!invalidLetterParsed);
     assert(SatelliteCatalog::alpha5(100465) == QStringLiteral("A0465"));
     assert(SatelliteCatalog::alpha5(339999) == QStringLiteral("Z9999"));
 
@@ -93,9 +101,11 @@ int main(int argc, char* argv[])
     }
     entries.append(custom);
     catalog.setEntries(entries);
-    assert(catalog.save(&error));
+    const bool savedCatalog = catalog.save(&error);
+    assert(savedCatalog);
     SatelliteCatalog reloaded;
-    assert(reloaded.load(&error));
+    const bool loaded = reloaded.load(&error);
+    assert(loaded);
     const SatelliteProfile* saved = reloaded.find(custom.norad);
     assert(saved && saved->name == custom.name &&
            saved->selectedHz == custom.selectedHz &&
@@ -107,11 +117,14 @@ int main(int argc, char* argv[])
         {234567, QStringLiteral("New satellite"), {}, 0},
         {234567, QStringLiteral("Duplicate source"), {}, 0},
         {345678, QString(), {}, 0}};
-    assert(reloaded.mergeDiscovered(discovered, &error));
-    assert(reloaded.mergeDiscovered(discovered, &error));
+    const bool merged = reloaded.mergeDiscovered(discovered, &error);
+    assert(merged);
+    const bool mergedAgain = reloaded.mergeDiscovered(discovered, &error);
+    assert(mergedAgain);
     assert(reloaded.entries().size() == beforeImport + 2);
     SatelliteCatalog imported;
-    assert(imported.load(&error));
+    const bool importedLoaded = imported.load(&error);
+    assert(importedLoaded);
     assert(imported.entries().size() == beforeImport + 2);
     assert(imported.find(custom.norad)->name == custom.name);
     assert(imported.find(custom.norad)->selectedHz == custom.selectedHz);

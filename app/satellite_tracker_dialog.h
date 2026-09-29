@@ -3,10 +3,12 @@
 #include "satellite_catalog.h"
 
 #include <QDialog>
+#include <QIcon>
 #include <QVector>
 #include <QMap>
 #include <QQueue>
 #include <QSet>
+#include <functional>
 
 #include "sgp4.h"
 
@@ -15,16 +17,23 @@ class QDoubleSpinBox;
 class QLabel;
 class QNetworkAccessManager;
 class QNetworkReply;
+class QNetworkRequest;
 class QPushButton;
 class QTimer;
+class QUrl;
 
 class SatelliteTrackerDialog final : public QDialog
 {
     Q_OBJECT
 public:
+    // Replies must belong to the supplied parent and finish asynchronously.
+    using RequestFactory =
+        std::function<QNetworkReply*(const QNetworkRequest&, QObject*)>;
     SatelliteTrackerDialog(double longitudeDeg, double latitudeDeg,
                            double altitudeMeters, const QString& preferredSatellite,
-                           QWidget* parent = nullptr, bool integrated = false);
+                           QWidget* parent = nullptr, bool integrated = false,
+                           RequestFactory requestFactory = {},
+                           const QIcon& windowIcon = QIcon(QStringLiteral(":/tiny/icon.png")));
     ~SatelliteTrackerDialog() override;
     static bool validateEphemeris(const QByteArray& payload,
                                   int expectedNorad, QString* error);
@@ -42,6 +51,7 @@ private:
     void saveSettings();
     void updateTle();
     void downloadNextSource();
+    QNetworkReply* requestOrbit(const QUrl& url);
     void finishDownloads();
     void saveEphemerisCache();
     void pruneEphemerisCache();
@@ -96,6 +106,7 @@ private:
     QLabel* station_ = nullptr;
     QPushButton* updateButton_ = nullptr;
     QNetworkAccessManager* network_ = nullptr;
+    RequestFactory requestFactory_;
     QTimer* timer_ = nullptr;
 
 #ifdef Q_OS_WIN

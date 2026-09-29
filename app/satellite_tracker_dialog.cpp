@@ -38,6 +38,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <utility>
 
 #ifdef Q_OS_WIN
 #include <windows.h>
@@ -108,16 +109,17 @@ double jsonNumber(const QJsonObject& object, const QString& key, bool* ok)
 
 SatelliteTrackerDialog::SatelliteTrackerDialog(
     double longitudeDeg, double latitudeDeg, double altitudeMeters,
-    const QString& preferredSatellite, QWidget* parent, bool integrated)
+    const QString& preferredSatellite, QWidget* parent, bool integrated,
+    RequestFactory requestFactory, const QIcon& windowIcon)
     : QDialog(parent), longitudeDeg_(longitudeDeg), latitudeDeg_(latitudeDeg),
       altitudeMeters_(altitudeMeters), preferredSatellite_(preferredSatellite),
-      integrated_(integrated)
+      integrated_(integrated), requestFactory_(std::move(requestFactory))
 {
     setWindowFlags(Qt::Window | Qt::WindowTitleHint | Qt::WindowSystemMenuHint |
                    Qt::WindowMinimizeButtonHint | Qt::WindowMaximizeButtonHint |
                    Qt::WindowCloseButtonHint);
     setWindowTitle(QStringLiteral("Tiny Doppler"));
-    setWindowIcon(QIcon(QStringLiteral(":/tiny/icon.png")));
+    setWindowIcon(windowIcon);
     buildUi();
     QString catalogError;
     if (!catalog_.load(&catalogError)) {
@@ -144,7 +146,6 @@ SatelliteTrackerDialog::SatelliteTrackerDialog(
             MapViewOfFile(mappingHandle_, FILE_MAP_ALL_ACCESS, 0, 0, 64));
 #endif
 
-    network_ = new QNetworkAccessManager(this);
     timer_ = new QTimer(this);
     connect(timer_, &QTimer::timeout, this, [this] { updateTracking(); });
     timer_->start(500);
@@ -174,6 +175,17 @@ SatelliteTrackerDialog::SatelliteTrackerDialog(
         QTimer::singleShot(0, this, [this] { updateTle(); });
     else
         status_->setText(tr("没有星历来源"));
+}
+
+QNetworkReply* SatelliteTrackerDialog::requestOrbit(const QUrl& url)
+{
+    const QNetworkRequest request = orbitRequest(url);
+    if (requestFactory_)
+        return requestFactory_(request, this);
+    // Do not initialize a system network backend until a download is needed.
+    if (!network_)
+        network_ = new QNetworkAccessManager(this);
+    return network_->get(request);
 }
 
 SatelliteTrackerDialog::~SatelliteTrackerDialog()
@@ -489,7 +501,7 @@ void SatelliteTrackerDialog::downloadNextSource()
     status_->setText(tr("正在更新星历（%1/%2）")
                          .arg(downloadIndex_)
                          .arg(downloadSources_.size()));
-    QNetworkReply* reply = network_->get(orbitRequest(QUrl(source)));
+    QNetworkReply* reply = requestOrbit(QUrl(source));
     boundReply(reply);
     connect(reply, &QNetworkReply::finished, this, [this, reply, source] {
         const QByteArray data = reply->readAll();
@@ -627,7 +639,7 @@ void SatelliteTrackerDialog::startNextEphemerisLookup()
     }
     status_->setText(tr("正在查询 %1 的星历…").arg(name));
     updateButton_->setEnabled(false);
-    QNetworkReply* reply = network_->get(orbitRequest(QUrl(source)));
+    QNetworkReply* reply = requestOrbit(QUrl(source));
     lookupReply_ = reply;
     boundReply(reply);
     connect(reply, &QNetworkReply::finished, this, [this, reply, norad, name, source] {

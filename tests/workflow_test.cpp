@@ -13,9 +13,10 @@
 #include <QLineEdit>
 #include <QListWidget>
 #include <QMessageBox>
-#include <QNetworkAccessManager>
+#include <QNetworkRequest>
 #include <QNetworkReply>
 #include <QPlainTextEdit>
+#include <QPointer>
 #include <QPushButton>
 #include <QSettings>
 #include <QStandardPaths>
@@ -88,18 +89,15 @@ private:
     qint64 position_ = 0;
 };
 
-class FakeNetwork final : public QNetworkAccessManager {
+class FakeNetwork final {
 public:
-    using QNetworkAccessManager::QNetworkAccessManager;
     QMap<int, Response> responses;
     QList<QUrl> requests;
-protected:
-    QNetworkReply* createRequest(Operation, const QNetworkRequest& request,
-                                 QIODevice*) override
+    QNetworkReply* get(const QNetworkRequest& request, QObject* parent)
     {
         requests.append(request.url());
         const int id = QUrlQuery(request.url()).queryItemValue("CATNR").toInt();
-        return new FakeReply(request, responses.value(id, {"No GP data found"}), this);
+        return new FakeReply(request, responses.value(id, {"No GP data found"}), parent);
     }
 };
 
@@ -119,18 +117,28 @@ static void capture(QWidget* widget, const char* name)
     const QString directory = qEnvironmentVariable("TINY_DOPPLER_QA_DIR");
     if (directory.isEmpty()) return;
     QDir().mkpath(directory);
-    assert(widget->grab().save(QDir(directory).filePath(QString::fromLatin1(name))));
+    const bool saved = widget->grab().save(QDir(directory).filePath(QString::fromLatin1(name)));
+    assert(saved);
 }
 
 struct TrackerTestAccess {
     static void run()
     {
-        SatelliteTrackerDialog window(0, 0, 0, {});
+        FakeNetwork fake;
+        auto* network = &fake;
+        const auto requestFactory = [&fake](const QNetworkRequest& request, QObject* parent) {
+            return fake.get(request, parent);
+        };
+        // The workflow tests own neither networking nor raster conversion.
+        // A large PNG starts the system Qt image-conversion thread pool; that
+        // uninstrumented library reports TSan races even in a Qt-only probe.
+        // Keep the real icon for optional screenshot QA, not sanitizer runs.
+        const QIcon icon = qEnvironmentVariableIsEmpty("TINY_DOPPLER_QA_DIR")
+            ? QIcon() : QIcon(QStringLiteral(":/tiny/icon.png"));
+        SatelliteTrackerDialog window(0, 0, 0, {}, nullptr, false, requestFactory, icon);
         assert(window.catalog_.entries().isEmpty());
         assert(window.sourceUrls_.isEmpty());
-        delete window.network_;
-        auto* network = new FakeNetwork(&window);
-        window.network_ = network;
+        assert(!window.network_);
         window.catalog_.setEntries({
             {61781, "Custom ASRTU name", {435400000, 436210000}, 436210000},
             {100465, "Custom JAMX name", {435500000}, 435500000},
@@ -141,9 +149,11 @@ struct TrackerTestAccess {
             {44444, "Removed during lookup", {}, 0}
         });
         QString error;
-        assert(window.catalog_.save(&error));
+        const bool catalogSaved = window.catalog_.save(&error);
+        assert(catalogSaved);
         window.cachedSources_.insert("legacy:0", orbit(61781));
-        assert(window.installEphemerides(window.cachedSources_.values()));
+        const bool installed = window.installEphemerides(window.cachedSources_.values());
+        assert(installed);
         window.refreshSatelliteChoices(61781);
         assert(window.frequencyMHz_->value() == 436.21);
         window.refreshSatelliteChoices(100465);
@@ -277,11 +287,17 @@ struct TrackerTestAccess {
         window.installEphemerides(window.cachedSources_.values(), {orbit(25544)});
         assert(!window.catalog_.find(25544));
         window.saveEphemerisCache();
+        QPointer<QNetworkReply> inFlight;
         {
-            SatelliteTrackerDialog reopened(0, 0, 0, {});
+            SatelliteTrackerDialog reopened(0, 0, 0, {}, nullptr, false, requestFactory, icon);
             assert(!reopened.catalog_.find(25544));
             assert(reopened.dismissedNorads_.contains(25544));
+            // Closing a window must also destroy its pending replies/timers.
+            inFlight = reopened.requestOrbit(QUrl(issSource));
+            assert(inFlight && inFlight->parent() == &reopened);
+            assert(!reopened.network_);
         }
+        assert(inFlight.isNull());
         // Re-adding a deleted satellite must query even with a legacy orbit
         // already loaded. Otherwise it never acquires a refreshable source.
         assert(!window.sourceUrls_.contains(issSource));
@@ -319,6 +335,7 @@ struct TrackerTestAccess {
         assert(network->requests.size() == requestsBeforeReadd + 1);
         assert(window.sourceUrls_.count(issSource) == 1);
         capture(&window, "tracking.png");
+        assert(!window.network_); // No real network manager, including during refresh.
     }
 };
 
@@ -368,7 +385,8 @@ int main(int argc, char** argv)
     QSettings::setPath(QSettings::IniFormat, QSettings::SystemScope, directory.path());
     testCatalogUi();
     // The tracker should start with a fresh, empty standalone catalog.
-    assert(QFile::remove(SatelliteCatalog::filePath()));
+    const bool removed = QFile::remove(SatelliteCatalog::filePath());
+    assert(removed);
     TrackerTestAccess::run();
     return 0;
 }

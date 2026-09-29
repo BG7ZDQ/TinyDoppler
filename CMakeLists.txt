@@ -52,6 +52,8 @@ install(DIRECTORY assets/translations/ DESTINATION
     ${CMAKE_INSTALL_BINDIR}/translations FILES_MATCHING PATTERN "*.qm")
 
 if(BUILD_TESTING)
+    set(TINY_DOPPLER_TEST_QPA_PLATFORM "offscreen" CACHE STRING
+        "Qt platform for GUI tests (use minimal for Linux sanitizers)")
     add_executable(tiny_catalog_test tests/catalog_test.cpp
         app/satellite_catalog.cpp app/satellite_catalog.h app/resources.qrc)
     target_include_directories(tiny_catalog_test PRIVATE app)
@@ -92,5 +94,5 @@ if(BUILD_TESTING)
     endif()
     add_test(NAME tiny_workflow_test COMMAND tiny_workflow_test)
     set_tests_properties(tiny_workflow_test PROPERTIES
-        ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 30)
+        ENVIRONMENT "QT_QPA_PLATFORM=${TINY_DOPPLER_TEST_QPA_PLATFORM}" TIMEOUT 30)
 endif()
