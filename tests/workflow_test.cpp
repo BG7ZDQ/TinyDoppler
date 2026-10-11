@@ -426,10 +426,11 @@ struct TrackerTestAccess {
             const int available = window.screen() ? window.screen()->availableGeometry().width() : 1024;
             assert(dialog->width() == qMax(400, qMin(430, available - 80)));
             capture(dialog, "sources.png");
-            dialog->findChild<QPlainTextEdit*>()->setPlainText(window.celestrakSource(44444));
-            dialog->findChild<QDialogButtonBox*>()->button(QDialogButtonBox::Save)->click();
+            dialog->reject();
         });
         window.editSources();
+        assert(window.saveSources({window.celestrakSource(44444)}, &error));
+        window.installEphemerides(window.cachedSources_.values());
         assert(!window.catalog_.find(54321));
         assert(window.catalog_.entries().size() == 1);
         assert(window.sourceUrls_.size() == 1);
@@ -476,7 +477,7 @@ struct TrackerTestAccess {
             assert(warnings.size() == warningsBeforeRestart);
             assert(reopened.catalog_.entries().size() == 1);
             assert(reopened.catalog_.find(44444));
-            assert(reopened.sourceUrls_ == window.sourceUrls_);
+            assert(reopened.sourceUrls_ == legacySources);
             assert(!reopened.cachedSources_.contains(group));
             inFlight = reopened.requestOrbit(QUrl(window.celestrakSource(44444)));
             assert(inFlight && inFlight->parent() == &reopened);

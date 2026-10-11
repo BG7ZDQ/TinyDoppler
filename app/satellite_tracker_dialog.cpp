@@ -18,20 +18,22 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QLabel>
+#include <QLineEdit>
+#include <QHeaderView>
 #include <QMessageBox>
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
 #include <QNetworkRequest>
-#include <QPlainTextEdit>
 #include <QPushButton>
 #include <QRegularExpression>
 #include <QSaveFile>
 #include <QScreen>
+#include <QSignalBlocker>
 #include <QSettings>
 #include <QSet>
 #include <QStandardPaths>
 #include <QTimer>
-#include <QTextOption>
+#include <QTreeWidget>
 #include <QUrl>
 #include <QUrlQuery>
 #include <QVBoxLayout>
@@ -81,8 +83,9 @@ bool isCelestrakSource(const QString& source)
         url.path() == QStringLiteral("/NORAD/elements/gp.php");
 }
 
-QString jsonOrbitSource(const QString& source)
+QString orbitSourceIdentity(const QString& source)
 {
+    // Used only to retain bindings/cache across equivalent URL edits.
     QUrl url(source);
     if (isCelestrakSource(source)) {
         url.setScheme(QStringLiteral("https"));
@@ -222,15 +225,6 @@ SatelliteTrackerDialog::SatelliteTrackerDialog(
             url.setQuery(query);
             source = url.toString();
         }
-        const QString jsonSource = jsonOrbitSource(source);
-        if (jsonSource == source)
-            continue;
-        if (migratedCache.contains(source)) {
-            if (!migratedCache.contains(jsonSource))
-                migratedCache.insert(jsonSource, migratedCache.value(source));
-            migratedCache.remove(source);
-        }
-        source = jsonSource;
     }
     migratedSources.removeDuplicates();
     for (const auto& entry : catalog_.entries()) {
@@ -297,7 +291,7 @@ void SatelliteTrackerDialog::buildUi()
         "QComboBox,QDoubleSpinBox { background:white; color:#17202a; "
         "border:1px solid #cbd5e1; min-height:25px; "
         "border-radius:5px; padding:3px 5px; }"
-        "QPlainTextEdit { background:white; color:#17202a; "
+        "QLineEdit,QTreeWidget { background:white; color:#17202a; "
         "border:1px solid #cbd5e1; border-radius:5px; padding:5px; }"
         "QComboBox QAbstractItemView { background:#ffffff; color:#17202a; "
         "selection-background-color:#dceeff; selection-color:#17202a; "
@@ -746,8 +740,7 @@ QSet<int> SatelliteTrackerDialog::sourceNorads(const QString& source,
     QSet<int> result;
     const QUrl url(source);
     int norad = 0;
-    if (url.host().compare(QStringLiteral("celestrak.org"), Qt::CaseInsensitive) == 0 &&
-        url.path() == QStringLiteral("/NORAD/elements/gp.php") &&
+    if (isCelestrakSource(source) &&
         SatelliteCatalog::parseNorad(QUrlQuery(url).queryItemValue(QStringLiteral("CATNR")),
                                      &norad))
         result.insert(norad);
@@ -927,13 +920,25 @@ bool SatelliteTrackerDialog::saveSources(const QStringList& inputSources, QStrin
                 *error = tr("请使用 CelesTrak GP 星历来源：%1").arg(source);
             return false;
         }
-        const auto normalized = jsonOrbitSource(source.trimmed());
-        if (!sources.contains(normalized))
-            sources.append(normalized);
+        const auto trimmed = source.trimmed();
+        if (!sources.contains(trimmed))
+            sources.append(trimmed);
+    }
+    auto cache = cachedSources_;
+    // A format/host-only edit keeps the same satellite binding and cached orbit.
+    for (const auto& source : sources) {
+        if (cache.contains(source))
+            continue;
+        for (auto it = cachedSources_.cbegin(); it != cachedSources_.cend(); ++it) {
+            if (orbitSourceIdentity(it.key()) == orbitSourceIdentity(source)) {
+                cache.insert(source, it.value());
+                break;
+            }
+        }
     }
     QSet<int> supported;
     for (const auto& source : sources)
-        supported.unite(sourceNorads(source, cachedSources_.value(source)));
+        supported.unite(sourceNorads(source, cache.value(source)));
     QList<SatelliteProfile> entries;
     auto dismissed = dismissedNorads_;
     for (const auto& entry : catalog_.entries()) {
@@ -942,7 +947,7 @@ bool SatelliteTrackerDialog::saveSources(const QStringList& inputSources, QStrin
         else
             dismissed.insert(entry.norad);
     }
-    return saveLinkedState(entries, sources, cachedSources_, dismissed, error);
+    return saveLinkedState(entries, sources, cache, dismissed, error);
 }
 
 QString SatelliteTrackerDialog::celestrakSource(int norad) const
@@ -951,7 +956,11 @@ QString SatelliteTrackerDialog::celestrakSource(int norad) const
         const QUrl url(source);
         if (isCelestrakSource(source) &&
             QUrlQuery(url).queryItemValue(QStringLiteral("CATNR")).toInt() == norad)
-            return jsonOrbitSource(source);
+            return source;
+    }
+    for (const auto& source : sourceUrls_) {
+        if (sourceNorads(source, cachedSources_.value(source)).contains(norad))
+            return source;
     }
     return QStringLiteral(
         "https://celestrak.org/NORAD/elements/gp.php?CATNR=%1&FORMAT=JSON").arg(norad);
@@ -1332,24 +1341,103 @@ void SatelliteTrackerDialog::editSources()
     const int availableWidth = screen() ? screen()->availableGeometry().width() : 1024;
     dialog.resize(qMax(400, qMin(430, availableWidth - 80)), 390);
     auto* layout = new QVBoxLayout(&dialog);
-    layout->addWidget(new QLabel(tr("每行填写一个下载网址。"), &dialog));
-    auto* editor = new QPlainTextEdit(&dialog);
     const QStringList originalSources = sourceUrls_;
-    editor->setPlainText(sourceUrls_.join(QLatin1Char('\n')));
-    editor->setLineWrapMode(QPlainTextEdit::WidgetWidth);
-    editor->setWordWrapMode(QTextOption::WrapAnywhere);
-    layout->addWidget(editor, 1);
+    auto* sources = new QTreeWidget(&dialog);
+    sources->setObjectName(QStringLiteral("ephemerisSources"));
+    sources->setHeaderLabels({tr("卫星 / 卫星组"), QStringLiteral("NORAD")});
+    sources->header()->setSectionResizeMode(0, QHeaderView::Stretch);
+    sources->header()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
+    sources->setSelectionMode(QAbstractItemView::SingleSelection);
+    sources->setTextElideMode(Qt::ElideRight);
+    sources->setMinimumHeight(130);
+    const auto satelliteName = [this](int norad) {
+        const auto* entry = catalog_.find(norad);
+        return entry && !entry->name.isEmpty() ? entry->name : tr("NORAD %1").arg(norad);
+    };
+    const auto appendSource = [&](const QString& source) {
+        auto* item = new QTreeWidgetItem(sources);
+        item->setData(0, Qt::UserRole, source);
+        item->setToolTip(0, source);
+        const auto members = sourceNorads(source, cachedSources_.value(source)) - dismissedNorads_;
+        auto ids = members.values();
+        std::sort(ids.begin(), ids.end());
+        if (ids.size() == 1) {
+            item->setText(0, satelliteName(ids.first()));
+            item->setText(1, QString::number(ids.first()));
+        } else if (ids.size() > 1) {
+            QString name = QUrlQuery(QUrl(source)).queryItemValue(QStringLiteral("GROUP"));
+            if (name.isEmpty())
+                name = tr("卫星组");
+            item->setText(0, tr("%1（%2 颗）").arg(name).arg(ids.size()));
+            for (int norad : ids) {
+                auto* satellite = new QTreeWidgetItem(item, {satelliteName(norad), QString::number(norad)});
+                satellite->setToolTip(0, source);
+            }
+        } else {
+            const QString group = QUrlQuery(QUrl(source)).queryItemValue(QStringLiteral("GROUP"));
+            item->setText(0, source.isEmpty() ? tr("新来源")
+                : group.isEmpty() ? tr("待更新来源") : tr("%1（待更新）").arg(group));
+        }
+        return item;
+    };
+    for (const auto& source : sourceUrls_)
+        appendSource(source);
+    layout->addWidget(sources, 1);
+    auto* actions = new QHBoxLayout;
+    auto* add = new QPushButton(tr("添加来源"), &dialog);
+    add->setObjectName(QStringLiteral("addEphemerisSource"));
+    auto* remove = new QPushButton(tr("删除来源"), &dialog);
+    remove->setObjectName(QStringLiteral("removeEphemerisSource"));
+    actions->addWidget(add);
+    actions->addWidget(remove);
+    actions->addStretch();
+    layout->addLayout(actions);
+    auto* linkLabel = new QLabel(tr("星历链接"), &dialog);
+    auto* editor = new QLineEdit(&dialog);
+    editor->setObjectName(QStringLiteral("ephemerisSourceUrl"));
+    editor->setAccessibleName(tr("星历链接"));
+    editor->setPlaceholderText(QStringLiteral("https://celestrak.org/NORAD/elements/gp.php?..."));
+    layout->addWidget(linkLabel);
+    layout->addWidget(editor);
+    const auto selectedSource = [sources]() -> QTreeWidgetItem* {
+        auto* item = sources->currentItem();
+        return item && item->parent() ? item->parent() : item;
+    };
+    const auto selectSource = [&] {
+        const auto* item = selectedSource();
+        const QSignalBlocker blocked(editor);
+        editor->setText(item ? item->data(0, Qt::UserRole).toString() : QString());
+        editor->setCursorPosition(0);
+        editor->setEnabled(item != nullptr);
+        remove->setEnabled(item != nullptr);
+        linkLabel->setText(item && item->childCount() > 1 ? tr("卫星组星历链接") : tr("星历链接"));
+    };
+    connect(sources, &QTreeWidget::currentItemChanged, &dialog, selectSource);
+    connect(editor, &QLineEdit::textChanged, &dialog, [&](const QString& text) {
+        if (auto* item = selectedSource()) {
+            item->setData(0, Qt::UserRole, text);
+            item->setToolTip(0, text);
+        }
+    });
+    connect(add, &QPushButton::clicked, &dialog, [&] {
+        sources->setCurrentItem(appendSource({}));
+        editor->setFocus();
+    });
+    connect(remove, &QPushButton::clicked, &dialog, [&] {
+        delete selectedSource();
+        selectSource();
+    });
+    sources->setCurrentItem(sources->topLevelItem(0));
+    selectSource();
     auto* buttons = new QDialogButtonBox(
         QDialogButtonBox::Save | QDialogButtonBox::Cancel, &dialog);
     buttons->button(QDialogButtonBox::Save)->setText(tr("保存"));
     buttons->button(QDialogButtonBox::Cancel)->setText(tr("取消"));
     layout->addWidget(buttons);
     connect(buttons, &QDialogButtonBox::accepted, &dialog, [&] {
-        const QStringList lines = editor->toPlainText().split(
-            QRegularExpression(QStringLiteral("[\r\n]+")), Qt::SkipEmptyParts);
         QStringList validated;
-        for (const QString& line : lines) {
-            const QString urlText = line.trimmed();
+        for (int row = 0; row < sources->topLevelItemCount(); ++row) {
+            const QString urlText = sources->topLevelItem(row)->data(0, Qt::UserRole).toString().trimmed();
             const QUrl url(urlText);
             if (!url.isValid() ||
                 (url.scheme() != QStringLiteral("https") &&

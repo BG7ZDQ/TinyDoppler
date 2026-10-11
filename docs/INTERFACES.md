@@ -97,8 +97,18 @@ Source settings, cache and catalog use an ordered save with failure rollback;
 they are not a single cross-file atomic transaction. The orbit cache is saved
 before newly discovered catalog entries, allowing discovery to recover on startup.
 
-Sources use CelesTrak GP feeds over HTTPS with `FORMAT=JSON`, including group
-feeds. On startup, older providers are replaced by per-satellite CelesTrak feeds
-for the saved catalog. Valid cached orbits for those satellites remain available
-until refresh. CelesTrak's older `.com` host and TLE format URLs are normalized;
-the source editor rejects non-CelesTrak feeds.
+Generated sources use CelesTrak GP feeds over HTTPS with `FORMAT=JSON`.
+User-entered CelesTrak URLs are preserved after trimming outer whitespace,
+including omitted FORMAT parameters and explicit TLE formats, across saves,
+downloads and restarts. Equivalent host/format edits retain cached satellite
+bindings and frequencies. The source editor rejects non-CelesTrak feeds.
+On startup, older providers are replaced by per-satellite CelesTrak feeds for
+the saved catalog; valid cached orbits remain available until refresh.
+
+The source editor shows each source as a satellite or, when the downloaded
+payload contains multiple satellites, an expandable group. Group members are
+identified by NORAD and share one editable source URL. A member selected in the
+tree edits its group's link; removing a source removes the entire binding on
+Save. Cancel leaves the bindings unchanged. Group membership persists in the
+source cache and is rebuilt on restart. Lookups reuse a satellite's existing
+group source instead of creating an additional per-satellite source.

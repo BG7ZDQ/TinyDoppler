@@ -171,6 +171,17 @@
 </context>
 <context>
     <name>SatelliteTrackerDialog</name>
+    <message><source>卫星 / 卫星组</source><translation>衛星 / グループ</translation></message>
+    <message><source>NORAD %1</source><translation>NORAD %1</translation></message>
+    <message><source>卫星组</source><translation>衛星グループ</translation></message>
+    <message><source>%1（%2 颗）</source><translation>%1（%2 機）</translation></message>
+    <message><source>新来源</source><translation>新しい取得元</translation></message>
+    <message><source>待更新来源</source><translation>更新待ちの取得元</translation></message>
+    <message><source>%1（待更新）</source><translation>%1（更新待ち）</translation></message>
+    <message><source>添加来源</source><translation>取得元を追加</translation></message>
+    <message><source>删除来源</source><translation>取得元を削除</translation></message>
+    <message><source>星历链接</source><translation>軌道データURL</translation></message>
+    <message><source>卫星组星历链接</source><translation>グループの軌道データURL</translation></message>
     <message><source>请使用 CelesTrak GP 星历来源：%1</source><translation>CelesTrak GPの軌道データURLを使用してください：%1</translation></message>
     <message>
         <source>无法读取卫星设置</source>
