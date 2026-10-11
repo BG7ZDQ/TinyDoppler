@@ -48,13 +48,20 @@ private:
 
     void buildUi();
     void loadSettings();
-    void saveSettings();
+    bool saveSettings(QString* error = nullptr);
     void updateTle();
     void downloadNextSource();
     QNetworkReply* requestOrbit(const QUrl& url);
     void finishDownloads();
-    void saveEphemerisCache();
+    bool saveEphemerisCache(QString* error = nullptr);
     void pruneEphemerisCache();
+    static QSet<int> sourceNorads(const QString& source, const QByteArray& payload);
+    static QByteArray withoutSatellites(const QByteArray& payload, const QSet<int>& removed);
+    bool saveCatalogEntries(const QList<SatelliteProfile>& entries, QString* error);
+    bool saveSources(const QStringList& sources, QString* error);
+    bool saveLinkedState(const QList<SatelliteProfile>& entries, const QStringList& sources,
+                         QMap<QString, QByteArray> cache, const QSet<int>& dismissed,
+                         QString* error);
     void queueEphemerisLookup(int norad);
     QString celestrakSource(int norad) const;
     void startNextEphemerisLookup();
@@ -87,9 +94,13 @@ private:
     QMap<QString, QByteArray> cachedSources_;
     QMap<QString, QByteArray> freshSources_;
     QSet<int> dismissedNorads_;
+    QMap<QString, quint64> sourceRevisions_;
+    quint64 nextSourceRevision_ = 0;
+    QSet<QString> rediscoverSources_;
     QQueue<int> lookupQueue_;
     QSet<int> pendingLookups_;
     bool downloading_ = false;
+    bool refreshRequested_ = false;
     QNetworkReply* lookupReply_ = nullptr;
 
     QComboBox* satellite_ = nullptr;

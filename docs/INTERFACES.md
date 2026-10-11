@@ -64,7 +64,41 @@ are canonical decimal values. TLE Alpha-5 fields are decoded before matching
 entries; for example `A0465` maps to `100465`. Invalid Alpha-5 letters `I`
 and `O` are rejected. All user changes are saved via an atomic replacement.
 
+Optional `frequencyNotes` maps integer hertz (as JSON object keys) to text.
+The frequency list's context menu edits or removes a note; changes are committed
+only when the catalog dialog is saved. Adding a frequency starts with an empty
+MHz field. The tracker frequency selector and list double-click select the active
+frequency; the catalog has no separate selection button.
+
 The orbit-data cache is separate and may contain TLE and CelesTrak GP/OMM
 JSON source bodies. A source with malformed or unusable elements produces a
 visible error. If multiple sources include the same NORAD object, the newest
 valid epoch is used.
+
+### Satellite/source lifecycle
+
+The tracker saves a new satellite's CelesTrak source before committing its
+catalog entry, then downloads asynchronously. A failed request preserves both
+the profile and source for retry and shows an error; it does not invent orbit data.
+Successful source updates discover their satellites automatically, preserving
+existing user names and frequencies. Successful shared-feed replacements remove
+satellites no longer supported by any configured source. Failed refreshes keep
+the last valid cache.
+
+Deleting a satellite removes its dedicated sources and cached orbit records.
+Shared sources remain for their other satellites; a persisted exclusion prevents
+the deleted satellite from reappearing on routine refresh. Deleting a source
+removes satellites that have no other source. Explicitly re-adding a source
+allows its satellites to be discovered again, including after restart. Legacy
+unattributed cache entries are migrated only for existing catalog satellites.
+Responses from removed/replaced sources cannot repopulate the current cache.
+
+Source settings, cache and catalog use an ordered save with failure rollback;
+they are not a single cross-file atomic transaction. The orbit cache is saved
+before newly discovered catalog entries, allowing discovery to recover on startup.
+
+Sources use CelesTrak GP feeds over HTTPS with `FORMAT=JSON`, including group
+feeds. On startup, older providers are replaced by per-satellite CelesTrak feeds
+for the saved catalog. Valid cached orbits for those satellites remain available
+until refresh. CelesTrak's older `.com` host and TLE format URLs are normalized;
+the source editor rejects non-CelesTrak feeds.

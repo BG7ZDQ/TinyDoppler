@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QList>
+#include <QMap>
 #include <QString>
 #include <QStringList>
 
@@ -9,6 +10,14 @@ struct SatelliteProfile {
     QString name;
     QList<qint64> frequenciesHz;
     qint64 selectedHz = 0;
+    QMap<qint64, QString> frequencyNotes = {};
+
+    QString frequencyLabel(qint64 hz) const
+    {
+        const QString frequency = QStringLiteral("%1 MHz").arg(hz / 1e6, 0, 'f', 6);
+        const QString note = frequencyNotes.value(hz);
+        return note.isEmpty() ? frequency : frequency + QStringLiteral(" · ") + note;
+    }
 };
 
 class SatelliteCatalog {

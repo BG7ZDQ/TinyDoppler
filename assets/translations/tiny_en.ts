@@ -54,6 +54,8 @@
 </context>
 <context>
     <name>CatalogDialog</name>
+    <message><source>编辑备注</source><translation>Edit note</translation></message>
+    <message><source>删除备注</source><translation>Remove note</translation></message>
     <message>
         <source>卫星与频率管理</source>
         <translation>Satellites and frequencies</translation>
@@ -83,16 +85,12 @@
         <translation>Satellite name</translation>
     </message>
     <message>
-        <source>下行频率</source>
-        <translation>Downlink frequencies</translation>
+        <source>下行频率（右键修改备注）</source>
+        <translation>Downlink frequencies (right-click to edit notes)</translation>
     </message>
     <message>
         <source>添加</source>
         <translation>Add</translation>
-    </message>
-    <message>
-        <source>设为当前频率</source>
-        <translation>Use this frequency</translation>
     </message>
     <message>
         <source>保存</source>
@@ -131,8 +129,8 @@
         <translation>Remove satellite</translation>
     </message>
     <message>
-        <source>确定删除“%1”及其频率吗？</source>
-        <translation>Remove “%1” and its frequencies?</translation>
+        <source>确定删除“%1”、频率及关联星历吗？</source>
+        <translation>Remove “%1”, its frequencies and associated orbit data?</translation>
     </message>
     <message>
         <source>输入无效</source>
@@ -173,6 +171,7 @@
 </context>
 <context>
     <name>SatelliteTrackerDialog</name>
+    <message><source>请使用 CelesTrak GP 星历来源：%1</source><translation>Use a CelesTrak GP orbit source: %1</translation></message>
     <message>
         <source>无法读取卫星设置</source>
         <translation>Could not read satellite settings</translation>
@@ -380,6 +379,13 @@ The source has been kept. Click “Update orbit data” to retry.
 
 %2
 %3</translation>
+    </message>
+</context>
+<context>
+    <name>SatelliteTrackerDialog</name>
+    <message>
+        <source>无法保存星历来源设置。</source>
+        <translation>Could not save orbit source settings.</translation>
     </message>
 </context>
 </TS>

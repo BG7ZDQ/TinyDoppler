@@ -1,7 +1,8 @@
 #include "catalog_dialog.h"
 
+#include <QAction>
 #include <QDialogButtonBox>
-#include <QDoubleSpinBox>
+#include <QDoubleValidator>
 #include <QFormLayout>
 #include <QFontMetrics>
 #include <QGroupBox>
@@ -9,11 +10,15 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
+#include <QLocale>
+#include <QInputDialog>
+#include <QMenu>
 #include <QMessageBox>
 #include <QPainter>
 #include <QPushButton>
 #include <QStyledItemDelegate>
 #include <QVBoxLayout>
+#include <utility>
 
 namespace {
 class FrequencyRowDelegate final : public QStyledItemDelegate {
@@ -101,8 +106,10 @@ public:
 };
 }
 
-CatalogDialog::CatalogDialog(SatelliteCatalog& catalog, QWidget* parent)
-    : QDialog(parent), catalog_(catalog), entries_(catalog.entries())
+CatalogDialog::CatalogDialog(SatelliteCatalog& catalog, QWidget* parent,
+                             SaveHandler saveHandler)
+    : QDialog(parent), catalog_(catalog), saveHandler_(std::move(saveHandler)),
+      entries_(catalog.entries())
 {
     setWindowTitle(tr("卫星与频率管理"));
     for (const auto& entry : entries_)
@@ -178,27 +185,35 @@ CatalogDialog::CatalogDialog(SatelliteCatalog& catalog, QWidget* parent)
     form->addRow(tr("NORAD 编号"), norad_);
     form->addRow(tr("卫星名称"), name_);
     rightLayout->addLayout(form);
-    rightLayout->addWidget(new QLabel(tr("下行频率"), right));
+    rightLayout->addSpacing(12);
+    rightLayout->addWidget(new QLabel(tr("下行频率（右键修改备注）"), right));
     frequencies_ = new QListWidget(right);
     frequencies_->setObjectName(QStringLiteral("frequencyList"));
     frequencies_->setItemDelegate(new FrequencyRowDelegate(frequencies_));
     frequencies_->setMouseTracking(true);
     frequencies_->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    frequencies_->setContextMenuPolicy(Qt::CustomContextMenu);
     rightLayout->addWidget(frequencies_, 1);
     auto* frequencyActions = new QHBoxLayout;
-    frequency_ = new QDoubleSpinBox(right);
-    frequency_->setRange(1.0, 10000.0);
-    frequency_->setDecimals(6);
-    frequency_->setSuffix(QStringLiteral(" MHz"));
-    frequency_->setValue(435.4);
+    frequency_ = new QLineEdit(right);
+    frequency_->setObjectName(QStringLiteral("frequencyInput"));
+    frequency_->setPlaceholderText(QStringLiteral("MHz"));
+    frequency_->setAccessibleName(tr("下行频率"));
+    auto* frequencyValidator = new QDoubleValidator(1.0, 10000.0, 6, frequency_);
+    auto frequencyLocale = QLocale::c();
+    frequencyLocale.setNumberOptions(QLocale::RejectGroupSeparator);
+    frequencyValidator->setLocale(frequencyLocale);
+    frequencyValidator->setNotation(QDoubleValidator::StandardNotation);
+    frequency_->setValidator(frequencyValidator);
     auto* addFrequencyButton = new QPushButton(tr("添加"), right);
+    addFrequencyButton->setObjectName(QStringLiteral("addFrequency"));
+    addFrequencyButton->setEnabled(false);
     auto* removeFrequencyButton = new QPushButton(tr("删除"), right);
+    removeFrequencyButton->setObjectName(QStringLiteral("removeFrequency"));
     frequencyActions->addWidget(frequency_, 1);
     frequencyActions->addWidget(addFrequencyButton);
     frequencyActions->addWidget(removeFrequencyButton);
     rightLayout->addLayout(frequencyActions);
-    auto* selectButton = new QPushButton(tr("设为当前频率"), right);
-    rightLayout->addWidget(selectButton, 0, Qt::AlignRight);
     columns->addWidget(right, 3);
     outer->addLayout(columns, 1);
 
@@ -232,8 +247,11 @@ CatalogDialog::CatalogDialog(SatelliteCatalog& catalog, QWidget* parent)
             [this] { addFrequency(); });
     connect(removeFrequencyButton, &QPushButton::clicked, this,
             [this] { removeFrequency(); });
-    connect(selectButton, &QPushButton::clicked, this,
-            [this] { selectFrequency(); });
+    connect(frequency_, &QLineEdit::textChanged, this, [this, addFrequencyButton] {
+        addFrequencyButton->setEnabled(frequency_->hasAcceptableInput());
+    });
+    connect(frequencies_, &QListWidget::customContextMenuRequested,
+            this, &CatalogDialog::showFrequencyMenu);
     connect(frequencies_, &QListWidget::itemDoubleClicked, this,
             [this] { selectFrequency(); });
     connect(buttons, &QDialogButtonBox::accepted, this,
@@ -256,7 +274,10 @@ void CatalogDialog::refreshSatellites(int selectNorad)
     int selectedRow = entries_.isEmpty() ? -1 : 0;
     for (int row = 0; row < entries_.size(); ++row) {
         const SatelliteProfile& profile = entries_.at(row);
-        auto* item = new QListWidgetItem(profile.name, satellites_);
+        auto* item = new QListWidgetItem(profile.name.isEmpty()
+                                             ? tr("NORAD %1").arg(profile.norad)
+                                             : profile.name,
+                                         satellites_);
         item->setData(Qt::UserRole, profile.name);
         item->setData(Qt::UserRole + 1, QString::number(profile.norad));
         item->setToolTip(QStringLiteral("%1 · NORAD %2")
@@ -280,6 +301,7 @@ void CatalogDialog::refreshDetails()
     removeSatelliteButton_->setEnabled(profile != nullptr);
     norad_->setText(profile ? QString::number(profile->norad) : QString());
     name_->setText(profile ? profile->name : QString());
+    frequency_->clear();
     refreshFrequencies();
 }
 
@@ -291,7 +313,7 @@ void CatalogDialog::refreshFrequencies()
         return;
     for (qint64 hz : profile->frequenciesHz) {
         auto* item = new QListWidgetItem(
-            QStringLiteral("%1 MHz").arg(hz / 1e6, 0, 'f', 6), frequencies_);
+            profile->frequencyLabel(hz), frequencies_);
         item->setData(Qt::UserRole, hz == profile->selectedHz);
         item->setToolTip(item->text());
     }
@@ -336,10 +358,7 @@ void CatalogDialog::addSatellite()
     int norad = 0;
     connect(buttons, &QDialogButtonBox::accepted, &dialog, [&] {
         QString message;
-        if (name->text().trimmed().isEmpty()) {
-            message = tr("请填写不超过 120 个字符的卫星名称。");
-            name->setFocus();
-        } else if (!SatelliteCatalog::parseNorad(id->text(), &norad)) {
+        if (!SatelliteCatalog::parseNorad(id->text(), &norad)) {
             message = tr("请输入十进制编号或标准的五字符 Alpha-5 编号。");
             id->setFocus();
         } else {
@@ -374,7 +393,7 @@ void CatalogDialog::removeSatellite()
     if (row < 0 || row >= entries_.size())
         return;
     if (QMessageBox::question(this, tr("删除卫星"),
-                              tr("确定删除“%1”及其频率吗？")
+                              tr("确定删除“%1”、频率及关联星历吗？")
                                   .arg(entries_.at(row).name)) != QMessageBox::Yes)
         return;
     entries_.removeAt(row);
@@ -387,10 +406,9 @@ bool CatalogDialog::applyDetails(int row)
         return true;
     SatelliteProfile* profile = &entries_[row];
     int norad = 0;
-    if (!SatelliteCatalog::parseNorad(norad_->text(), &norad) ||
-        name_->text().trimmed().isEmpty()) {
+    if (!SatelliteCatalog::parseNorad(norad_->text(), &norad)) {
         QMessageBox::warning(this, tr("输入无效"),
-                             tr("请填写有效的 NORAD 编号和卫星名称。"));
+                             tr("请输入有效的 NORAD 编号。"));
         return false;
     }
     for (const SatelliteProfile& entry : entries_) {
@@ -403,7 +421,9 @@ bool CatalogDialog::applyDetails(int row)
     profile->norad = norad;
     profile->name = name_->text().trimmed();
     auto* item = satellites_->item(row);
-    item->setText(profile->name);
+    item->setText(profile->name.isEmpty()
+                      ? tr("NORAD %1").arg(profile->norad)
+                      : profile->name);
     item->setData(Qt::UserRole, profile->name);
     item->setData(Qt::UserRole + 1, QString::number(profile->norad));
     item->setToolTip(QStringLiteral("%1 · NORAD %2")
@@ -414,9 +434,9 @@ bool CatalogDialog::applyDetails(int row)
 void CatalogDialog::addFrequency()
 {
     SatelliteProfile* profile = currentProfile();
-    if (!profile)
+    if (!profile || !frequency_->hasAcceptableInput())
         return;
-    const qint64 hz = qRound64(frequency_->value() * 1e6);
+    const qint64 hz = qRound64(QLocale::c().toDouble(frequency_->text()) * 1e6);
     if (profile->frequenciesHz.contains(hz)) {
         QMessageBox::information(this, tr("频率已存在"),
                                  tr("该频率已在列表中。"));
@@ -427,6 +447,46 @@ void CatalogDialog::addFrequency()
         profile->selectedHz = hz;
     refreshFrequencies();
     frequencies_->setCurrentRow(profile->frequenciesHz.size() - 1);
+    frequency_->clear();
+}
+
+void CatalogDialog::showFrequencyMenu(const QPoint& position)
+{
+    auto* item = frequencies_->itemAt(position);
+    auto* profile = currentProfile();
+    if (!item || !profile)
+        return;
+    const int row = frequencies_->row(item);
+    const qint64 hz = profile->frequenciesHz.at(row);
+    frequencies_->setCurrentItem(item);
+    QMenu menu(this);
+    auto* editNote = menu.addAction(tr("编辑备注"));
+    editNote->setObjectName(QStringLiteral("editFrequencyNote"));
+    auto* removeNote = menu.addAction(tr("删除备注"));
+    removeNote->setObjectName(QStringLiteral("removeFrequencyNote"));
+    removeNote->setEnabled(!profile->frequencyNotes.value(hz).isEmpty());
+    const auto* action = menu.exec(frequencies_->viewport()->mapToGlobal(position));
+    if (action == editNote) {
+        QInputDialog editor(this);
+        editor.setWindowTitle(tr("编辑备注"));
+        editor.setLabelText(QStringLiteral("%1 MHz").arg(hz / 1e6, 0, 'f', 6));
+        editor.setTextValue(profile->frequencyNotes.value(hz));
+        editor.setOkButtonText(tr("保存"));
+        editor.setCancelButtonText(tr("取消"));
+        if (editor.exec() != QDialog::Accepted)
+            return;
+        const QString note = editor.textValue().trimmed();
+        if (note.isEmpty())
+            profile->frequencyNotes.remove(hz);
+        else
+            profile->frequencyNotes.insert(hz, note);
+    } else if (action == removeNote) {
+        profile->frequencyNotes.remove(hz);
+    } else {
+        return;
+    }
+    item->setText(profile->frequencyLabel(hz));
+    item->setToolTip(item->text());
 }
 
 void CatalogDialog::removeFrequency()
@@ -436,6 +496,7 @@ void CatalogDialog::removeFrequency()
     if (!profile || row < 0 || row >= profile->frequenciesHz.size())
         return;
     const qint64 removed = profile->frequenciesHz.takeAt(row);
+    profile->frequencyNotes.remove(removed);
     if (profile->selectedHz == removed)
         profile->selectedHz = profile->frequenciesHz.isEmpty()
                                   ? 0 : profile->frequenciesHz.first();
@@ -468,9 +529,15 @@ void CatalogDialog::accept()
             !editedNorads.contains(entry.norad))
             entries_.append(entry);
     }
-    catalog_.setEntries(entries_);
     QString error;
-    if (!catalog_.save(&error)) {
+    bool saved = false;
+    if (saveHandler_) {
+        saved = saveHandler_(entries_, &error);
+    } else {
+        catalog_.setEntries(entries_);
+        saved = catalog_.save(&error);
+    }
+    if (!saved) {
         catalog_.setEntries(previous);
         QMessageBox::critical(this, tr("无法保存"),
                               tr("卫星设置未保存：%1").arg(error));

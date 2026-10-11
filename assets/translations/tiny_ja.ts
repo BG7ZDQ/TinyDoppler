@@ -54,6 +54,8 @@
 </context>
 <context>
     <name>CatalogDialog</name>
+    <message><source>编辑备注</source><translation>メモを編集</translation></message>
+    <message><source>删除备注</source><translation>メモを削除</translation></message>
     <message>
         <source>卫星与频率管理</source>
         <translation>衛星と周波数の管理</translation>
@@ -83,16 +85,12 @@
         <translation>衛星名</translation>
     </message>
     <message>
-        <source>下行频率</source>
-        <translation>ダウンリンク周波数</translation>
+        <source>下行频率（右键修改备注）</source>
+        <translation>ダウンリンク周波数（右クリックで備考を編集）</translation>
     </message>
     <message>
         <source>添加</source>
         <translation>追加</translation>
-    </message>
-    <message>
-        <source>设为当前频率</source>
-        <translation>現在の周波数に設定</translation>
     </message>
     <message>
         <source>保存</source>
@@ -131,8 +129,8 @@
         <translation>衛星を削除</translation>
     </message>
     <message>
-        <source>确定删除“%1”及其频率吗？</source>
-        <translation>「%1」とその周波数を削除しますか？</translation>
+        <source>确定删除“%1”、频率及关联星历吗？</source>
+        <translation>「%1」、その周波数と関連する軌道データを削除しますか？</translation>
     </message>
     <message>
         <source>输入无效</source>
@@ -173,6 +171,7 @@
 </context>
 <context>
     <name>SatelliteTrackerDialog</name>
+    <message><source>请使用 CelesTrak GP 星历来源：%1</source><translation>CelesTrak GPの軌道データURLを使用してください：%1</translation></message>
     <message>
         <source>无法读取卫星设置</source>
         <translation>衛星設定を読み込めません</translation>
@@ -380,6 +379,13 @@
 
 %2
 %3</translation>
+    </message>
+</context>
+<context>
+    <name>SatelliteTrackerDialog</name>
+    <message>
+        <source>无法保存星历来源设置。</source>
+        <translation>軌道データの取得元設定を保存できません。</translation>
     </message>
 </context>
 </TS>

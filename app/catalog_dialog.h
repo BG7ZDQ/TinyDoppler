@@ -4,8 +4,8 @@
 
 #include <QDialog>
 #include <QSet>
+#include <functional>
 
-class QDoubleSpinBox;
 class QLineEdit;
 class QListWidget;
 class QPushButton;
@@ -14,7 +14,9 @@ class QGroupBox;
 class CatalogDialog final : public QDialog {
     Q_OBJECT
 public:
-    explicit CatalogDialog(SatelliteCatalog& catalog, QWidget* parent = nullptr);
+    using SaveHandler = std::function<bool(const QList<SatelliteProfile>&, QString*)>;
+    explicit CatalogDialog(SatelliteCatalog& catalog, QWidget* parent = nullptr,
+                           SaveHandler saveHandler = {});
 
 private:
     void refreshSatellites(int selectNorad = 0);
@@ -26,17 +28,19 @@ private:
     void addFrequency();
     void removeFrequency();
     void selectFrequency();
+    void showFrequencyMenu(const QPoint& position);
     void accept() override;
     SatelliteProfile* currentProfile();
 
     SatelliteCatalog& catalog_;
+    SaveHandler saveHandler_;
     QList<SatelliteProfile> entries_;
     QSet<int> initialNorads_;
     QListWidget* satellites_ = nullptr;
     QLineEdit* norad_ = nullptr;
     QLineEdit* name_ = nullptr;
     QListWidget* frequencies_ = nullptr;
-    QDoubleSpinBox* frequency_ = nullptr;
+    QLineEdit* frequency_ = nullptr;
     QPushButton* removeSatelliteButton_ = nullptr;
     QGroupBox* details_ = nullptr;
     int activeRow_ = -1;

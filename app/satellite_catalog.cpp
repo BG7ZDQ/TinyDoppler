@@ -125,7 +125,7 @@ bool SatelliteCatalog::parse(const QByteArray& json,
         SatelliteProfile profile;
         profile.norad = static_cast<int>(norad);
         profile.name = item.value(QStringLiteral("name")).toString().trimmed();
-        if (profile.name.isEmpty() || profile.name.size() > 120 ||
+        if (profile.name.size() > 120 ||
             !item.value(QStringLiteral("frequenciesHz")).isArray()) {
             if (error) *error = QStringLiteral("Invalid satellite name or frequency list.");
             return false;
@@ -147,6 +147,12 @@ bool SatelliteCatalog::parse(const QByteArray& json,
              !profile.frequenciesHz.contains(profile.selectedHz))) {
             if (error) *error = QStringLiteral("Selected frequency is not in the list.");
             return false;
+        }
+        const auto notes = item.value(QStringLiteral("frequencyNotes")).toObject();
+        for (qint64 hz : profile.frequenciesHz) {
+            const QString note = notes.value(QString::number(hz)).toString().trimmed();
+            if (!note.isEmpty())
+                profile.frequencyNotes.insert(hz, note);
         }
         seen.insert(profile.norad);
         parsed.append(profile);
@@ -209,8 +215,69 @@ bool SatelliteCatalog::load(QString* error)
                         break;
                     }
                 }
+                if (currentRevision < 5) {
+                    for (int index = entries_.size() - 1; index >= 0; --index) {
+                        const auto old = entries_.at(index);
+                        if ((old.norad != 100465 && old.norad != 98248) ||
+                            !old.name.contains(QStringLiteral("JAMX"), Qt::CaseInsensitive))
+                            continue;
+                        if (!find(100470)) {
+                            entries_[index].norad = 100470;
+                            continue;
+                        }
+                        for (auto& target : entries_) {
+                            if (target.norad != 100470)
+                                continue;
+                            for (qint64 hz : old.frequenciesHz) {
+                                if (!target.frequenciesHz.contains(hz))
+                                    target.frequenciesHz.append(hz);
+                                if (!target.frequencyNotes.contains(hz) && old.frequencyNotes.contains(hz))
+                                    target.frequencyNotes.insert(hz, old.frequencyNotes.value(hz));
+                            }
+                            if (!target.selectedHz)
+                                target.selectedHz = old.selectedHz;
+                        }
+                        entries_.removeAt(index);
+                    }
+                }
                 for (const SatelliteProfile& profile : supplied) {
-                    if (!find(profile.norad))
+                    for (auto& entry : entries_) {
+                        if (entry.norad != profile.norad)
+                            continue;
+                        if (currentRevision < 6) {
+                            // Correct the old BY70-4 preset without losing user notes.
+                            if (entry.norad == 100469 && entry.frequenciesHz.contains(437443000)) {
+                                const int index = entry.frequenciesHz.indexOf(437443000);
+                                if (entry.frequenciesHz.contains(437433000))
+                                    entry.frequenciesHz.removeAt(index);
+                                else
+                                    entry.frequenciesHz[index] = 437433000;
+                                if (entry.selectedHz == 437443000)
+                                    entry.selectedHz = 437433000;
+                                const QString oldNote = entry.frequencyNotes.take(437443000);
+                                if (entry.frequencyNotes.value(437433000).isEmpty() && !oldNote.isEmpty())
+                                    entry.frequencyNotes.insert(437433000, oldNote);
+                            }
+                            for (qint64 hz : entry.frequenciesHz) {
+                                if (entry.frequencyNotes.value(hz).isEmpty() &&
+                                    !profile.frequencyNotes.value(hz).isEmpty())
+                                    entry.frequencyNotes.insert(hz, profile.frequencyNotes.value(hz));
+                            }
+                        }
+                        if (currentRevision < 7 && entry.norad == 100470 &&
+                            !entry.frequenciesHz.contains(435175000))
+                            entry.frequenciesHz.append(435175000);
+                        const QString name = entry.name.toUpper();
+                        if ((entry.norad == 61781 && name == QStringLiteral("ASRTU-1")) ||
+                            (entry.norad == 100469 && (name == QStringLiteral("BY04") ||
+                                                       name == QStringLiteral("BY-04") ||
+                                                       name == QStringLiteral("BY70-4") ||
+                                                       name == QStringLiteral("BY70-4 (8104 HARBIN MICROSAT)"))) ||
+                            (entry.norad == 100470 && (name == QStringLiteral("JAMX01") ||
+                                                       name == QStringLiteral("JAMX"))))
+                            entry.name = profile.name;
+                    }
+                    if (currentRevision < 3 && !find(profile.norad))
                         entries_.append(profile);
                 }
                 if (!save(error))
@@ -231,12 +298,18 @@ bool SatelliteCatalog::save(QString* error) const
     QJsonArray satellites;
     for (const SatelliteProfile& profile : entries_) {
         QJsonArray frequencies;
+        QJsonObject notes;
         for (qint64 hz : profile.frequenciesHz)
             frequencies.append(static_cast<double>(hz));
+        for (qint64 hz : profile.frequenciesHz) {
+            if (!profile.frequencyNotes.value(hz).isEmpty())
+                notes.insert(QString::number(hz), profile.frequencyNotes.value(hz));
+        }
         satellites.append(QJsonObject{
             {QStringLiteral("norad"), profile.norad},
             {QStringLiteral("name"), profile.name},
             {QStringLiteral("frequenciesHz"), frequencies},
+            {QStringLiteral("frequencyNotes"), notes},
             {QStringLiteral("selectedHz"), static_cast<double>(profile.selectedHz)}
         });
     }
@@ -247,7 +320,7 @@ bool SatelliteCatalog::save(QString* error) const
     }
     const QByteArray bytes = QJsonDocument(QJsonObject{
         {QStringLiteral("schemaVersion"), 1},
-        {QStringLiteral("catalogRevision"), 3},
+        {QStringLiteral("catalogRevision"), 7},
         {QStringLiteral("satellites"), satellites}
     }).toJson(QJsonDocument::Indented);
     if (file.write(bytes) != bytes.size() || !file.commit()) {
@@ -285,8 +358,16 @@ bool SatelliteCatalog::mergeDiscovered(const QList<SatelliteProfile>& discovered
     for (const auto& entry : entries_)
         known.insert(entry.norad);
     for (const auto& satellite : discovered) {
-        if (satellite.norad <= 0 || known.contains(satellite.norad))
+        if (satellite.norad <= 0)
             continue;
+        if (known.contains(satellite.norad)) {
+            for (auto& entry : entries_) {
+                if (entry.norad == satellite.norad && entry.name.trimmed().isEmpty() &&
+                    !satellite.name.trimmed().isEmpty())
+                    entry.name = satellite.name.trimmed().left(120);
+            }
+            continue;
+        }
         QString name = satellite.name.trimmed().left(120);
         if (name.isEmpty())
             name = QStringLiteral("NORAD %1").arg(satellite.norad);
