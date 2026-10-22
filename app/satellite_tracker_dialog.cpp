@@ -1295,7 +1295,8 @@ bool SatelliteTrackerDialog::installEphemerides(const QList<QByteArray>& sources
             continue;
         for (const auto& sat : parsed) {
             if (!dismissedNorads_.contains(sat.tle.norad_id))
-                discovered.append({sat.tle.norad_id, sat.name, {}, 0});
+                discovered.append(
+                    {sat.tle.norad_id, sat.name, {}, 0, {}, {}});
         }
     }
     QString catalogError;

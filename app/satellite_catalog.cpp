@@ -412,7 +412,7 @@ bool SatelliteCatalog::mergeDiscovered(const QList<SatelliteProfile>& discovered
         if (name.isEmpty())
             name = QStringLiteral("NORAD %1").arg(satellite.norad);
         // Orbital elements do not provide a radio frequency.
-        entries_.append({satellite.norad, name, {}, 0});
+        entries_.append({satellite.norad, name, {}, 0, {}, {}});
         known.insert(satellite.norad);
         changed = true;
     }

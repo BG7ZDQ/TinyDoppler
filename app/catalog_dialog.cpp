@@ -32,18 +32,6 @@ bool isEphemerisSourceUrl(const QString& source)
         !url.host().isEmpty();
 }
 
-bool isCelesTrakSource(const QString& source)
-{
-    const QUrl url(source);
-    const QString host = url.host().toLower();
-    return isEphemerisSourceUrl(source) &&
-        (host == QStringLiteral("celestrak.org") ||
-         host == QStringLiteral("www.celestrak.org") ||
-         host == QStringLiteral("celestrak.com") ||
-         host == QStringLiteral("www.celestrak.com")) &&
-        url.path() == QStringLiteral("/NORAD/elements/gp.php");
-}
-
 bool sourceNorad(const QString& source, int* norad)
 {
     if (!isEphemerisSourceUrl(source))
