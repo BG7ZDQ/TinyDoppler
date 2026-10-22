@@ -1,8 +1,6 @@
 using System;
 using System.Drawing;
-using System.Globalization;
 using System.Windows.Forms;
-using Microsoft.Win32;
 using SDRSharp.Common;
 
 namespace SDRSharp.AstroSeriesBridge
@@ -12,36 +10,17 @@ namespace SDRSharp.AstroSeriesBridge
         private readonly IqBridgeProcessor _processor;
         private readonly ISharpControl _control;
         private readonly DopplerControlReader _doppler;
+        private readonly ComboBox _language;
         private readonly CheckBox _enabled;
         private readonly CheckBox _autoDoppler;
         private readonly Label _status;
         private readonly Timer _timer;
+        private string _languageCode = "en";
 
-        private static string TextFor(string chinese, string english, string japanese)
+        private string L(string chinese, string english, string japanese)
         {
-            string language = CultureInfo.CurrentUICulture.TwoLetterISOLanguageName;
-            return language == "zh" ? chinese : language == "ja" ? japanese : english;
-        }
-
-        private static bool LoadAutoDoppler()
-        {
-            try
-            {
-                using (RegistryKey key = Registry.CurrentUser.OpenSubKey(@"Software\TinyDoppler"))
-                    return key != null && Convert.ToInt32(key.GetValue("AutoDoppler", 0)) != 0;
-            }
-            catch { return false; }
-        }
-
-        private static void SaveAutoDoppler(bool enabled)
-        {
-            try
-            {
-                using (RegistryKey key = Registry.CurrentUser.CreateSubKey(@"Software\TinyDoppler"))
-                    if (key != null)
-                        key.SetValue("AutoDoppler", enabled ? 1 : 0, RegistryValueKind.DWord);
-            }
-            catch { /* A read-only profile must not interrupt reception. */ }
+            return _languageCode == "zh" ? chinese
+                 : _languageCode == "ja" ? japanese : english;
         }
 
         public BridgeControlPanel(ISharpControl control, IqBridgeProcessor processor)
@@ -56,7 +35,7 @@ namespace SDRSharp.AstroSeriesBridge
                 Dock = DockStyle.Top,
                 AutoSize = true,
                 ColumnCount = 1,
-                RowCount = 4
+                RowCount = 5
             };
             Controls.Add(layout);
             layout.Controls.Add(new Label
@@ -65,22 +44,43 @@ namespace SDRSharp.AstroSeriesBridge
                 AutoSize = true,
                 Font = new Font(Font, FontStyle.Bold)
             });
+            _language = new ComboBox
+            {
+                DropDownStyle = ComboBoxStyle.DropDownList,
+                AutoSize = true,
+                Width = 120
+            };
+            _language.Items.AddRange(new object[] { "English", "中文", "日本語" });
+            _language.SelectedIndex = 0; // English by default for every UI culture.
+            layout.Controls.Add(_language);
             _enabled = new CheckBox
             {
-                Text = TextFor("向接收器发送 I/Q", "Send I/Q to receiver", "受信機へI/Qを送る"),
+                Text = L("启用共享内存桥接", "Enable shared-memory bridge", "共有メモリブリッジを有効化"),
                 Checked = processor.Enabled,
                 AutoSize = true
             };
-            _enabled.CheckedChanged += delegate { processor.Enabled = _enabled.Checked; };
+            _enabled.CheckedChanged += delegate {
+                processor.Enabled = _enabled.Checked;
+                _enabled.Checked = processor.Enabled;
+                UpdateStatus();
+            };
             layout.Controls.Add(_enabled);
             _autoDoppler = new CheckBox
             {
-                Text = TextFor("自动多普勒调谐", "Automatic Doppler tuning", "自動ドップラー補正"),
-                Checked = LoadAutoDoppler(),
+                Text = L("自动多普勒调谐", "Automatic Doppler tuning", "自動ドップラー補正"),
+                Checked = true,
                 AutoSize = true
             };
-            _autoDoppler.CheckedChanged += delegate { SaveAutoDoppler(_autoDoppler.Checked); };
             layout.Controls.Add(_autoDoppler);
+            _language.SelectedIndexChanged += delegate {
+                _languageCode = _language.SelectedIndex == 1 ? "zh"
+                               : _language.SelectedIndex == 2 ? "ja" : "en";
+                _enabled.Text = L("启用共享内存桥接", "Enable shared-memory bridge",
+                                  "共有メモリブリッジを有効化");
+                _autoDoppler.Text = L("自动多普勒调谐", "Automatic Doppler tuning",
+                                      "自動ドップラー補正");
+                UpdateStatus();
+            };
             _status = new Label { AutoSize = true };
             layout.Controls.Add(_status);
             _timer = new Timer { Interval = 500 };
@@ -91,15 +91,22 @@ namespace SDRSharp.AstroSeriesBridge
 
         private void UpdateStatus()
         {
+            _autoDoppler.Enabled = _processor.Enabled;
+            if (!_processor.Enabled)
+            {
+                _status.Text = _processor.StartError ??
+                    L("桥接已停止", "Bridge stopped", "ブリッジ停止中");
+                return; // A rejected/disabled bridge must never control tuning.
+            }
             string bridge = _processor.Enabled
-                ? TextFor("I/Q 已启用", "I/Q active", "I/Q有効")
-                : TextFor("I/Q 已关闭", "I/Q off", "I/Qオフ");
+                ? L("I/Q 已启用", "I/Q active", "I/Q有効")
+                : L("I/Q 已关闭", "I/Q off", "I/Qオフ");
             long targetHz;
             long correctionHz;
             if (!_autoDoppler.Checked)
             {
                 _status.Text = bridge + "\r\n" +
-                    TextFor("多普勒已关闭", "Doppler off", "ドップラー補正オフ");
+                    L("多普勒已关闭", "Doppler off", "ドップラー補正オフ");
             }
             else if (_doppler.TryRead(out targetHz, out correctionHz))
             {
@@ -114,13 +121,13 @@ namespace SDRSharp.AstroSeriesBridge
                 catch
                 {
                     _status.Text = bridge + "\r\n" +
-                        TextFor("无法调谐", "Tuning unavailable", "同調できません");
+                        L("无法调谐", "Tuning unavailable", "同調できません");
                 }
             }
             else
             {
                 _status.Text = bridge + "\r\n" +
-                    TextFor("等待跟踪器", "Waiting for tracker", "追跡待機中");
+                    L("等待跟踪器", "Waiting for tracker", "追跡待機中");
             }
         }
 

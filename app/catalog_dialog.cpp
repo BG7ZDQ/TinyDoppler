@@ -17,10 +17,46 @@
 #include <QPainter>
 #include <QPushButton>
 #include <QStyledItemDelegate>
+#include <QUrl>
+#include <QUrlQuery>
 #include <QVBoxLayout>
 #include <utility>
 
 namespace {
+bool isEphemerisSourceUrl(const QString& source)
+{
+    const QUrl url(source);
+    return url.isValid() &&
+        (url.scheme() == QStringLiteral("https") ||
+         url.scheme() == QStringLiteral("http")) &&
+        !url.host().isEmpty();
+}
+
+bool isCelesTrakSource(const QString& source)
+{
+    const QUrl url(source);
+    const QString host = url.host().toLower();
+    return isEphemerisSourceUrl(source) &&
+        (host == QStringLiteral("celestrak.org") ||
+         host == QStringLiteral("www.celestrak.org") ||
+         host == QStringLiteral("celestrak.com") ||
+         host == QStringLiteral("www.celestrak.com")) &&
+        url.path() == QStringLiteral("/NORAD/elements/gp.php");
+}
+
+bool sourceNorad(const QString& source, int* norad)
+{
+    if (!isEphemerisSourceUrl(source))
+        return false;
+    const QUrlQuery query{QUrl(source)};
+    for (const auto& key : {QStringLiteral("CATNR"), QStringLiteral("NORAD"),
+                            QStringLiteral("norad"), QStringLiteral("norad_id")}) {
+        if (SatelliteCatalog::parseNorad(query.queryItemValue(key), norad))
+            return true;
+    }
+    return false;
+}
+
 class FrequencyRowDelegate final : public QStyledItemDelegate {
 public:
     using QStyledItemDelegate::QStyledItemDelegate;
@@ -182,8 +218,14 @@ CatalogDialog::CatalogDialog(SatelliteCatalog& catalog, QWidget* parent,
     norad_ = new QLineEdit(right);
     name_ = new QLineEdit(right);
     name_->setMaxLength(120);
+    ephemerisSource_ = new QLineEdit(right);
+    ephemerisSource_->setObjectName(QStringLiteral("ephemerisSource"));
+    ephemerisSource_->setAccessibleName(tr("星历链接"));
+    ephemerisSource_->setPlaceholderText(QStringLiteral(
+        "任意 http(s) TLE/OMM 链接；留空使用 CelesTrak 默认链接"));
     form->addRow(tr("NORAD 编号"), norad_);
     form->addRow(tr("卫星名称"), name_);
+    form->addRow(tr("星历链接"), ephemerisSource_);
     rightLayout->addLayout(form);
     rightLayout->addSpacing(12);
     rightLayout->addWidget(new QLabel(tr("下行频率（右键修改备注）"), right));
@@ -297,10 +339,13 @@ void CatalogDialog::refreshDetails()
     details_->setEnabled(profile != nullptr);
     norad_->setEnabled(profile != nullptr);
     name_->setEnabled(profile != nullptr);
+    ephemerisSource_->setEnabled(profile != nullptr);
     frequencies_->setEnabled(profile != nullptr);
     removeSatelliteButton_->setEnabled(profile != nullptr);
     norad_->setText(profile ? QString::number(profile->norad) : QString());
     name_->setText(profile ? profile->name : QString());
+    ephemerisSource_->setText(profile ? profile->ephemerisSource : QString());
+    ephemerisSource_->setCursorPosition(0);
     frequency_->clear();
     refreshFrequencies();
 }
@@ -340,8 +385,14 @@ void CatalogDialog::addSatellite()
     name->setMinimumWidth(240);
     auto* id = new QLineEdit(&dialog);
     id->setObjectName(QStringLiteral("noradNumber"));
+    auto* source = new QLineEdit(&dialog);
+    source->setObjectName(QStringLiteral("ephemerisSource"));
+    source->setMinimumWidth(340);
+    source->setPlaceholderText(QStringLiteral(
+        "可选：任意 http(s) TLE/OMM 链接；留空则使用 CelesTrak 默认链接"));
     form->addRow(tr("卫星名称"), name);
     form->addRow(tr("NORAD 编号"), id);
+    form->addRow(tr("TLE / 星历链接"), source);
     layout->addLayout(form);
     auto* error = new QLabel(&dialog);
     error->setStyleSheet(QStringLiteral("color:#b53636;"));
@@ -349,6 +400,7 @@ void CatalogDialog::addSatellite()
     error->hide();
     connect(name, &QLineEdit::textChanged, error, &QWidget::hide);
     connect(id, &QLineEdit::textChanged, error, &QWidget::hide);
+    connect(source, &QLineEdit::textChanged, error, &QWidget::hide);
     layout->addWidget(error);
     auto* buttons = new QDialogButtonBox(
         QDialogButtonBox::Save | QDialogButtonBox::Cancel, &dialog);
@@ -358,10 +410,31 @@ void CatalogDialog::addSatellite()
     int norad = 0;
     connect(buttons, &QDialogButtonBox::accepted, &dialog, [&] {
         QString message;
-        if (!SatelliteCatalog::parseNorad(id->text(), &norad)) {
-            message = tr("请输入十进制编号或标准的五字符 Alpha-5 编号。");
+        bool noradValid = SatelliteCatalog::parseNorad(id->text(), &norad);
+        const QString link = source->text().trimmed();
+        if (!link.isEmpty()) {
+            if (!isEphemerisSourceUrl(link)) {
+                message = tr("请输入有效的 http(s) TLE/OMM 星历链接。");
+                source->setFocus();
+            } else {
+                int linkedNorad = 0;
+                if (sourceNorad(link, &linkedNorad)) {
+                    if (noradValid && linkedNorad != norad) {
+                        message = tr("TLE 链接中的 CATNR 是 %1，但 NORAD 是 %2。")
+                                      .arg(linkedNorad).arg(norad);
+                        id->setFocus();
+                    } else if (!noradValid) {
+                        norad = linkedNorad;
+                        noradValid = true;
+                    }
+                }
+            }
+        }
+        if (message.isEmpty() && !noradValid) {
+            message = tr("请填写 NORAD 编号，或填写带 CATNR 的 TLE/星历链接。");
             id->setFocus();
-        } else {
+        }
+        if (message.isEmpty()) {
             for (const auto& entry : entries_) {
                 if (entry.norad == norad) {
                     message = tr("该 NORAD 编号已在列表中。");
@@ -381,7 +454,13 @@ void CatalogDialog::addSatellite()
     name->setFocus();
     if (dialog.exec() != QDialog::Accepted)
         return;
-    entries_.append(SatelliteProfile{norad, name->text().trimmed(), {}, 0});
+    QString link = source->text().trimmed();
+    if (link.isEmpty()) {
+        link = QStringLiteral(
+            "https://celestrak.org/NORAD/elements/gp.php?CATNR=%1&FORMAT=JSON")
+                   .arg(norad);
+    }
+    entries_.append(SatelliteProfile{norad, name->text().trimmed(), {}, 0, {}, link});
     refreshSatellites(norad);
 }
 
@@ -418,8 +497,26 @@ bool CatalogDialog::applyDetails(int row)
             return false;
         }
     }
+    const QString source = ephemerisSource_->text().trimmed();
+    if (!source.isEmpty()) {
+        if (!isEphemerisSourceUrl(source)) {
+            QMessageBox::warning(
+                this, tr("星历链接无效"),
+                tr("请输入有效的 http(s) TLE/OMM 星历链接。"));
+            return false;
+        }
+        int linkedNorad = 0;
+        if (sourceNorad(source, &linkedNorad) && linkedNorad != norad) {
+            QMessageBox::warning(
+                this, tr("NORAD 不一致"),
+                tr("TLE 链接中的 CATNR 是 %1，但卫星 NORAD 是 %2。")
+                    .arg(linkedNorad).arg(norad));
+            return false;
+        }
+    }
     profile->norad = norad;
     profile->name = name_->text().trimmed();
+    profile->ephemerisSource = source;
     auto* item = satellites_->item(row);
     item->setText(profile->name.isEmpty()
                       ? tr("NORAD %1").arg(profile->norad)

@@ -13,17 +13,21 @@ tuning and I/Q delivery require the Windows plugin.
    with `--longitude`, `--latitude`, and `--altitude` (degrees, degrees,
    metres). See `--help` for all options.
 2. The standalone app starts with no satellites or orbit sources. Use
-   **Satellites and frequencies** to add a name, NORAD number, and downlink
-   frequencies, or download orbit data to discover satellites automatically.
-   The NORAD field accepts decimal catalog numbers and standard
-   five-character Alpha-5 values such as `A0465` (= 100465).
-   Saving a newly added satellite immediately saves its CelesTrak source and
-   starts a background download, even if a cached orbit already exists.
+   **Satellites and frequencies** to add a name, NORAD number, optional
+   HTTP(S) TLE/GP/OMM link, and downlink frequencies, or download orbit data to
+   discover satellites automatically. The NORAD field accepts decimal catalog
+   numbers and standard five-character Alpha-5 values such as `A0465`
+   (= 100465). Any HTTP(S) TLE or OMM JSON URL is accepted, not just CelesTrak.
+   If the TLE/GP link is left blank, a CelesTrak `gp.php` link for that NORAD is
+   generated. If both NORAD and a link contain `CATNR`, the two values must
+   match. The link can be changed later in the same dialog.
+   Saving a newly added satellite immediately saves its source and starts a
+   background download, even if a cached orbit already exists.
    A failed download shows a warning with the source and error; the satellite
    and source remain available so **Update orbit data** can retry.
-3. Add download URLs in **Orbit data management**, then use **Update orbit data**.
-   The application shows an error dialog if an orbit source
-   cannot be parsed. A previously valid local cache remains available.
+3. Use **Update orbit data** to refresh the configured sources; the application
+   shows an error dialog if an orbit source cannot be parsed. A previously
+   valid local cache remains available.
 
 Satellite names, NORAD IDs, frequencies, and each satellite's selected
 frequency are stored in the user configuration directory as `satellites.json`.

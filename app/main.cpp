@@ -90,6 +90,9 @@ void configureUiFont(QApplication& application)
 int main(int argc, char* argv[])
 {
     QCoreApplication::setAttribute(Qt::AA_EnableHighDpiScaling);
+#if QT_VERSION >= QT_VERSION_CHECK(5, 10, 0)
+    QCoreApplication::setAttribute(Qt::AA_DisableWindowContextHelpButton);
+#endif
     QCoreApplication::setAttribute(Qt::AA_UseHighDpiPixmaps);
 #if QT_VERSION >= QT_VERSION_CHECK(5, 14, 0)
     QGuiApplication::setHighDpiScaleFactorRoundingPolicy(
@@ -141,9 +144,8 @@ int main(int argc, char* argv[])
     // catalog, settings and orbit cache, without inheriting receiver presets.
     if (!integratedMode)
         QCoreApplication::setApplicationName(QStringLiteral("TinyDopplerStandalone"));
-    QSettings settings(QStringLiteral("TinyDoppler"),
-                       integratedMode ? QStringLiteral("Tracker")
-                                      : QStringLiteral("StandaloneTracker"));
+    QSettings settings(SatelliteTrackerDialog::settingsFilePath(integratedMode),
+                       QSettings::IniFormat);
     const double longitudeDeg = parser.isSet(longitude)
                                     ? parser.value(longitude).toDouble()
                                     : settings.value(QStringLiteral("longitude"), 0.0).toDouble();

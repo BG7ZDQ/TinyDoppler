@@ -39,6 +39,7 @@ private:
     QListWidget* satellites_ = nullptr;
     QLineEdit* norad_ = nullptr;
     QLineEdit* name_ = nullptr;
+    QLineEdit* ephemerisSource_ = nullptr;
     QListWidget* frequencies_ = nullptr;
     QLineEdit* frequency_ = nullptr;
     QPushButton* removeSatelliteButton_ = nullptr;

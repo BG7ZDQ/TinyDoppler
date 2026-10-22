@@ -18,12 +18,14 @@ namespace SDRSharp.AstroSeriesBridge
         private const double OutputSampleRate = 48000.0;
         private const long MappingBytes = HeaderBytes + (long)CapacitySamples * ComplexBytes;
 
-        private readonly MemoryMappedFile _mapping;
-        private readonly MemoryMappedViewAccessor _view;
+        private MemoryMappedFile _mapping;
+        private MemoryMappedViewAccessor _view;
+        private EventWaitHandle _owner;
+        public string StartError { get; private set; }
         private readonly object _stateLock = new object();
         private byte* _base;
         private bool _disposed;
-        private bool _enabled = true;
+        private bool _enabled;
         private double _inputSampleRate = OutputSampleRate;
         private long _inputCount;
         private double _nextOutputPosition;
@@ -32,14 +34,7 @@ namespace SDRSharp.AstroSeriesBridge
 
         public IqBridgeProcessor()
         {
-            _mapping = MemoryMappedFile.CreateOrOpen(
-                MappingName, MappingBytes, MemoryMappedFileAccess.ReadWrite);
-            _view = _mapping.CreateViewAccessor(0, MappingBytes,
-                                                MemoryMappedFileAccess.ReadWrite);
-            byte* pointer = null;
-            _view.SafeMemoryMappedViewHandle.AcquirePointer(ref pointer);
-            _base = pointer + _view.PointerOffset;
-            InitializeHeader();
+            Enabled = true;
         }
 
         public bool Enabled
@@ -49,11 +44,84 @@ namespace SDRSharp.AstroSeriesBridge
             {
                 lock (_stateLock)
                 {
-                    Volatile.Write(ref _enabled, value);
-                    if (_base != null)
-                        Volatile.Write(ref *(int*)(_base + 40), value ? 1 : 0);
+                    if (_disposed || value == _enabled)
+                        return;
+                    if (!value)
+                    {
+                        CloseBridge();
+                        return;
+                    }
+                    StartError = null;
+                    try
+                    {
+                        bool created;
+                        _owner = new EventWaitHandle(false, EventResetMode.ManualReset,
+                            @"Local\ASRTU_BRIDGE_OWNER_V1", out created);
+                        if (!created)
+                        {
+                            StartError = "Another ASRTU bridge plugin is running. Stop it first.";
+                            CloseBridge();
+                            return;
+                        }
+                        _mapping = MemoryMappedFile.CreateOrOpen(
+                            MappingName, MappingBytes, MemoryMappedFileAccess.ReadWrite);
+                        _view = _mapping.CreateViewAccessor(0, MappingBytes,
+                            MemoryMappedFileAccess.ReadWrite);
+                        // Protect older bridge versions that do not own the event.
+                        if (_view.ReadUInt32(0) == Magic)
+                        {
+                            int pid = _view.ReadInt32(56);
+                            if (pid > 0)
+                            {
+                                bool alive = true;
+                                try { using (System.Diagnostics.Process process = System.Diagnostics.Process.GetProcessById(pid))
+                                    alive = !process.HasExited; }
+                                catch (ArgumentException) { alive = false; }
+                                if (alive)
+                                {
+                                    StartError = "An existing ASRTU I/Q producer is running. Close it first.";
+                                    CloseBridge();
+                                    return;
+                                }
+                            }
+                        }
+                        byte* pointer = null;
+                        _view.SafeMemoryMappedViewHandle.AcquirePointer(ref pointer);
+                        _base = pointer + _view.PointerOffset;
+                        _inputCount = 0;
+                        _nextOutputPosition = 0;
+                        _havePreviousSample = false;
+                        InitializeHeader();
+                        Volatile.Write(ref _enabled, true);
+                        Volatile.Write(ref *(int*)(_base + 40), 1);
+                    }
+                    catch (Exception error)
+                    {
+                        StartError = "Cannot start shared-memory bridge: " + error.Message;
+                        CloseBridge();
+                    }
                 }
             }
+        }
+
+        // Caller holds _stateLock. Only a producer that initialized the header
+        // may mark it inactive; a rejected contender must never touch it.
+        private void CloseBridge()
+        {
+            Volatile.Write(ref _enabled, false);
+            if (_base != null)
+            {
+                Volatile.Write(ref *(int*)(_base + 40), 0);
+                Volatile.Write(ref *(int*)(_base + 56), 0);
+                _view.SafeMemoryMappedViewHandle.ReleasePointer();
+                _base = null;
+            }
+            if (_view != null) _view.Dispose();
+            if (_mapping != null) _mapping.Dispose();
+            if (_owner != null) _owner.Dispose();
+            _view = null;
+            _mapping = null;
+            _owner = null;
         }
 
         public double SampleRate
@@ -100,7 +168,7 @@ namespace SDRSharp.AstroSeriesBridge
 
             lock (_stateLock)
             {
-                if (Volatile.Read(ref _disposed) || _base == null)
+                if (Volatile.Read(ref _disposed) || !_enabled || _base == null)
                     return;
                 ulong writeIndex = (ulong)Volatile.Read(ref *(long*)(_base + 24));
                 byte* data = _base + HeaderBytes;
@@ -151,8 +219,8 @@ namespace SDRSharp.AstroSeriesBridge
 
         private void InitializeHeader()
         {
-            for (int i = 0; i < HeaderBytes; ++i)
-                _base[i] = 0;
+            // Preserve the cursor if a decoder retains the map across a handover.
+            Volatile.Write(ref *(int*)(_base + 40), 0);
             *(uint*)(_base + 0) = Magic;
             *(uint*)(_base + 4) = Version;
             *(double*)(_base + 8) = OutputSampleRate;
@@ -160,7 +228,7 @@ namespace SDRSharp.AstroSeriesBridge
             *(uint*)(_base + 20) = ComplexBytes;
             *(double*)(_base + 32) = _inputSampleRate;
             *(int*)(_base + 40) = _enabled ? 1 : 0;
-            *(long*)(_base + 48) = Stopwatch.GetTimestamp();
+            *(long*)(_base + 48) = 0;
             *(int*)(_base + 56) = System.Diagnostics.Process.GetCurrentProcess().Id;
             Thread.MemoryBarrier();
         }
@@ -172,15 +240,8 @@ namespace SDRSharp.AstroSeriesBridge
                 if (Volatile.Read(ref _disposed))
                     return;
                 Volatile.Write(ref _disposed, true);
-                if (_base != null)
-                {
-                    Volatile.Write(ref *(int*)(_base + 40), 0);
-                    _view.SafeMemoryMappedViewHandle.ReleasePointer();
-                    _base = null;
-                }
+                CloseBridge();
             }
-            _view.Dispose();
-            _mapping.Dispose();
         }
     }
 }

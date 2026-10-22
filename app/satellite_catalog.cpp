@@ -1,5 +1,6 @@
 #include "satellite_catalog.h"
 
+#include <QCoreApplication>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
@@ -8,7 +9,6 @@
 #include <QJsonObject>
 #include <QSaveFile>
 #include <QSet>
-#include <QStandardPaths>
 
 #include <limits>
 #include <utility>
@@ -33,14 +33,28 @@ bool jsonInteger(const QJsonValue& value, qint64* output)
 }
 }
 
+QString SatelliteCatalog::dataDirectory()
+{
+    const QString overridePath =
+        QString::fromLocal8Bit(qgetenv("TINY_DOPPLER_CONFIG_DIR"));
+    if (QDir::isAbsolutePath(overridePath))
+        return overridePath;
+    const QDir executableDirectory(QCoreApplication::applicationDirPath());
+    // Installed layout: <main>/doppler/TinyDoppler.exe. Standalone/dev builds
+    // keep their files next to the executable.
+    const QDir mainDirectory(executableDirectory.filePath(QStringLiteral("..")));
+    if (QFileInfo(executableDirectory.absolutePath())
+                .fileName()
+                .compare(QStringLiteral("doppler"), Qt::CaseInsensitive) == 0 &&
+        QFileInfo::exists(mainDirectory.filePath(
+            QStringLiteral("launcher/ASRTU1_Launcher.exe"))))
+        return mainDirectory.absolutePath();
+    return executableDirectory.absolutePath();
+}
+
 QString SatelliteCatalog::filePath()
 {
-    const QString configDirectory =
-        QString::fromLocal8Bit(qgetenv("TINY_DOPPLER_CONFIG_DIR"));
-    if (QDir::isAbsolutePath(configDirectory))
-        return QDir(configDirectory).filePath(QStringLiteral("satellites.json"));
-    return QDir(QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation))
-        .filePath(QStringLiteral("satellites.json"));
+    return QDir(dataDirectory()).filePath(QStringLiteral("satellites.json"));
 }
 
 bool SatelliteCatalog::parseNorad(const QString& input, int* number)
@@ -125,6 +139,8 @@ bool SatelliteCatalog::parse(const QByteArray& json,
         SatelliteProfile profile;
         profile.norad = static_cast<int>(norad);
         profile.name = item.value(QStringLiteral("name")).toString().trimmed();
+        profile.ephemerisSource = item.value(QStringLiteral("ephemerisSource"))
+                                      .toString().trimmed();
         if (profile.name.size() > 120 ||
             !item.value(QStringLiteral("frequenciesHz")).isArray()) {
             if (error) *error = QStringLiteral("Invalid satellite name or frequency list.");
@@ -308,6 +324,7 @@ bool SatelliteCatalog::save(QString* error) const
         satellites.append(QJsonObject{
             {QStringLiteral("norad"), profile.norad},
             {QStringLiteral("name"), profile.name},
+            {QStringLiteral("ephemerisSource"), profile.ephemerisSource},
             {QStringLiteral("frequenciesHz"), frequencies},
             {QStringLiteral("frequencyNotes"), notes},
             {QStringLiteral("selectedHz"), static_cast<double>(profile.selectedHz)}

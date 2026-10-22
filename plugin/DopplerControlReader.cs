@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using System.IO.MemoryMappedFiles;
+using System.Threading;
 
 namespace SDRSharp.AstroSeriesBridge
 {
@@ -24,14 +25,26 @@ namespace SDRSharp.AstroSeriesBridge
                     _view = _mapping.CreateViewAccessor(0, 64,
                         MemoryMappedFileAccess.Read);
                 }
+                int sequence = _view.ReadInt32(36);
+                Thread.MemoryBarrier();
+                if ((sequence & 1) != 0)
+                    return false;
                 if (_view.ReadUInt32(0) != Magic || _view.ReadUInt32(4) != 1 ||
                     _view.ReadInt32(32) == 0)
                     return false;
                 targetHz = _view.ReadInt64(8);
                 correctionHz = _view.ReadInt64(16);
                 long timestamp = _view.ReadInt64(24);
-                long age = Math.Abs(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() - timestamp);
-                return targetHz > 0 && age <= 3000;
+                Thread.MemoryBarrier();
+                if (sequence != _view.ReadInt32(36))
+                    return false;
+                long age = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() - timestamp;
+                if (timestamp <= 0 || age < 0 || age > 3000)
+                {
+                    CloseMapping();
+                    return false;
+                }
+                return targetHz > 0;
             }
             catch (FileNotFoundException)
             {

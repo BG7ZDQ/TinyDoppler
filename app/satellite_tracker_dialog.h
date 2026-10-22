@@ -22,6 +22,10 @@ class QPushButton;
 class QTimer;
 class QUrl;
 
+#ifndef Q_OS_WIN
+class QTcpSocket;
+#endif
+
 class SatelliteTrackerDialog final : public QDialog
 {
     Q_OBJECT
@@ -37,6 +41,7 @@ public:
     ~SatelliteTrackerDialog() override;
     static bool validateEphemeris(const QByteArray& payload,
                                   int expectedNorad, QString* error);
+    static QString settingsFilePath(bool integrated);
 
 private:
     friend struct TrackerTestAccess;
@@ -78,6 +83,9 @@ private:
     void editStation();
     void refreshStationLabel();
     void publishDoppler(qint64 targetHz, qint64 correctionHz, bool valid);
+#ifndef Q_OS_WIN
+    void publishRigctl(qint64 targetHz, bool valid);
+#endif
 
     double longitudeDeg_;
     double latitudeDeg_;
@@ -94,6 +102,7 @@ private:
     QMap<QString, QByteArray> cachedSources_;
     QMap<QString, QByteArray> freshSources_;
     QSet<int> dismissedNorads_;
+    QSet<QString> failedSources_;
     QMap<QString, quint64> sourceRevisions_;
     quint64 nextSourceRevision_ = 0;
     QSet<QString> rediscoverSources_;
@@ -119,6 +128,9 @@ private:
     QNetworkAccessManager* network_ = nullptr;
     RequestFactory requestFactory_;
     QTimer* timer_ = nullptr;
+#ifndef Q_OS_WIN
+    QTcpSocket* rigctl_ = nullptr;
+#endif
 
 #ifdef Q_OS_WIN
     void* mappingHandle_ = nullptr;

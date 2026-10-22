@@ -114,8 +114,10 @@ public:
         requests.append(request.url());
         const QUrlQuery query(request.url());
         const QString group = query.queryItemValue("GROUP");
-        const int id = group == "active" ? 900 : group == "amateur" ? 901
+        int id = group == "active" ? 900 : group == "amateur" ? 901
             : query.queryItemValue("CATNR").toInt();
+        if (id == 0)
+            id = query.queryItemValue("norad_cat_id").toInt();
         return new FakeReply(request, responses.value(id, {"No GP data found"}), parent);
     }
 };
@@ -147,8 +149,8 @@ struct TrackerTestAccess {
         catalog.setEntries({{61781, "ASRTU-1", {435400000}, 435400000}});
         QString error;
         assert(catalog.save(&error));
-        QSettings settings(QSettings::IniFormat, QSettings::UserScope,
-                           "TinyDoppler", "StandaloneTracker");
+        QSettings settings(SatelliteTrackerDialog::settingsFilePath(false),
+                           QSettings::IniFormat);
         settings.clear();
         settings.sync();
         FakeNetwork fake;
@@ -230,8 +232,8 @@ struct TrackerTestAccess {
         assert(window.catalog_.entries().isEmpty() && window.sourceUrls_.isEmpty());
         assert(!window.network_);
         QString error;
-        QSettings persisted(QSettings::IniFormat, QSettings::UserScope,
-                            "TinyDoppler", "StandaloneTracker");
+        QSettings persisted(SatelliteTrackerDialog::settingsFilePath(false),
+                            QSettings::IniFormat);
         auto saveCatalog = [&](const QList<SatelliteProfile>& entries) {
             const bool ok = window.saveCatalogEntries(entries, &error);
             assert(ok);
@@ -496,9 +498,13 @@ struct TrackerTestAccess {
         }
         capture(&window, "tracking.png");
         assert(!window.network_);
-        const auto sourcesBeforeInvalid = window.sourceUrls_;
-        assert(!window.saveSources({"https://example.org/orbits.json"}, &error));
-        assert(window.sourceUrls_ == sourcesBeforeInvalid);
+        const auto sourcesBeforeCustom = window.sourceUrls_;
+        auto withCustomSource = sourcesBeforeCustom;
+        withCustomSource.append(QStringLiteral("https://example.org/orbits.json"));
+        assert(window.saveSources(withCustomSource, &error));
+        assert(window.sourceUrls_ == withCustomSource);
+        assert(window.saveSources(sourcesBeforeCustom, &error));
+        assert(window.sourceUrls_ == sourcesBeforeCustom);
         closeWarnings.stop();
         // A corrected catalog must not reuse or rediscover the wrong orbit.
         window.catalog_.setEntries({{100470, "JAMX01", {435075000}, 435075000}});
@@ -519,7 +525,7 @@ struct TrackerTestAccess {
             assert(!corrected.catalog_.find(100465));
             assert(corrected.catalog_.find(100470));
         }
-        // Replace saved third-party sources, retaining only owned cached orbits.
+        // Third-party sources are valid and must survive migration.
         const QString legacySource = "https://db.satnogs.org/api/tle/?norad_cat_id=100470";
         persisted.setValue("tle_sources", QStringList{legacySource});
         persisted.sync();
@@ -528,17 +534,19 @@ struct TrackerTestAccess {
         const int requestsBeforeMigration = fake.requests.size();
         {
             SatelliteTrackerDialog migrated(0, 0, 0, {}, nullptr, false, factory, icon);
-            assert(migrated.sourceUrls_ == QStringList{migrated.celestrakSource(100470)});
+            assert(migrated.sourceUrls_ == QStringList{legacySource});
             assert(migrated.cachedSources_.size() == 1);
-            assert(!migrated.catalog_.find(12345));
-            assert(migrated.sourceNorads({}, migrated.cachedSources_.first()) == QSet<int>{100470});
+            assert(migrated.catalog_.find(12345));
+            assert(migrated.sourceNorads({}, migrated.cachedSources_.first()) ==
+                   (QSet<int>{100470, 12345}));
             awaitCondition([&] { return fake.requests.size() > requestsBeforeMigration &&
                 !migrated.downloading_; });
-            for (const auto& url : fake.requests)
-                assert(url.host() == "celestrak.org" && url.scheme() == "https");
+            for (int i = requestsBeforeMigration; i < fake.requests.size(); ++i)
+                assert(fake.requests.at(i).host() == "db.satnogs.org" &&
+                       fake.requests.at(i).scheme() == "https");
         }
         persisted.sync();
-        assert(!persisted.value("tle_sources").toStringList().contains(legacySource));
+        assert(persisted.value("tle_sources").toStringList().contains(legacySource));
     }
 };
 

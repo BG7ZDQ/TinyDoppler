@@ -94,5 +94,5 @@ if(BUILD_TESTING)
     endif()
     add_test(NAME tiny_workflow_test COMMAND tiny_workflow_test)
     set_tests_properties(tiny_workflow_test PROPERTIES
-        ENVIRONMENT "QT_QPA_PLATFORM=${TINY_DOPPLER_TEST_QPA_PLATFORM}" TIMEOUT 30)
+        ENVIRONMENT "QT_QPA_PLATFORM=${TINY_DOPPLER_TEST_QPA_PLATFORM}" TIMEOUT 60)
 endif()

@@ -33,6 +33,9 @@
 #include <QSet>
 #include <QStandardPaths>
 #include <QTimer>
+#ifndef Q_OS_WIN
+#include <QTcpSocket>
+#endif
 #include <QTreeWidget>
 #include <QUrl>
 #include <QUrlQuery>
@@ -65,19 +68,24 @@ QString normalizedSatellite(QString value)
 
 QString cachePath()
 {
-    const QString overridePath = QString::fromLocal8Bit(qgetenv("TINY_DOPPLER_CONFIG_DIR"));
-    const QString root = QDir::isAbsolutePath(overridePath) ? overridePath :
-        QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
+    const QString root = SatelliteCatalog::dataDirectory();
     QDir().mkpath(root);
     return QDir(root).filePath(QStringLiteral("ephemerides.json"));
+}
+
+bool isEphemerisSourceUrl(const QString& source)
+{
+    const QUrl url(source);
+    return url.isValid() &&
+        (url.scheme() == QStringLiteral("https") || url.scheme() == QStringLiteral("http")) &&
+        !url.host().isEmpty();
 }
 
 bool isCelestrakSource(const QString& source)
 {
     const QUrl url(source);
     const QString host = url.host().toLower();
-    return url.isValid() &&
-        (url.scheme() == QStringLiteral("https") || url.scheme() == QStringLiteral("http")) &&
+    return isEphemerisSourceUrl(source) &&
         (host == QStringLiteral("celestrak.org") || host == QStringLiteral("www.celestrak.org") ||
          host == QStringLiteral("celestrak.com") || host == QStringLiteral("www.celestrak.com")) &&
         url.path() == QStringLiteral("/NORAD/elements/gp.php");
@@ -181,6 +189,13 @@ SatelliteTrackerDialog::SatelliteTrackerDialog(
     timer_ = new QTimer(this);
     connect(timer_, &QTimer::timeout, this, [this] { updateTracking(); });
     timer_->start(500);
+#ifndef Q_OS_WIN
+    if (integrated_) {
+        rigctl_ = new QTcpSocket(this);
+        rigctl_->setProperty("host", QStringLiteral("127.0.0.1"));
+        rigctl_->setProperty("port", 4532);
+    }
+#endif
 
     QFile cache(cachePath());
     if (cache.open(QIODevice::ReadOnly)) {
@@ -209,7 +224,7 @@ SatelliteTrackerDialog::SatelliteTrackerDialog(
     auto migratedSources = sourceUrls_;
     // Replace older providers with per-satellite CelesTrak feeds below.
     migratedSources.erase(std::remove_if(migratedSources.begin(), migratedSources.end(),
-        [](const QString& source) { return !isCelestrakSource(source); }), migratedSources.end());
+        [](const QString& source) { return !isEphemerisSourceUrl(source); }), migratedSources.end());
     for (auto& source : migratedSources) {
         QUrl url(source);
         QUrlQuery query(url);
@@ -227,13 +242,42 @@ SatelliteTrackerDialog::SatelliteTrackerDialog(
         }
     }
     migratedSources.removeDuplicates();
-    for (const auto& entry : catalog_.entries()) {
+    QList<SatelliteProfile> migratedEntries = catalog_.entries();
+    for (auto& entry : migratedEntries) {
+        QString source = entry.ephemerisSource.trimmed();
+        if (!isEphemerisSourceUrl(source))
+            source.clear();
+        if (!source.isEmpty() && !migratedSources.contains(source)) {
+            for (const auto& candidate : migratedSources) {
+                if (orbitSourceIdentity(candidate) == orbitSourceIdentity(source)) {
+                    source = candidate;
+                    break;
+                }
+            }
+        }
+        if (source.isEmpty()) {
+            for (const auto& candidate : migratedSources) {
+                if (sourceNorads(candidate, migratedCache.value(candidate)).contains(entry.norad)) {
+                    source = candidate;
+                    break;
+                }
+            }
+        }
+        if (source.isEmpty()) {
+            source = QStringLiteral(
+                "https://celestrak.org/NORAD/elements/gp.php?CATNR=%1&FORMAT=JSON")
+                         .arg(entry.norad);
+        }
+        entry.ephemerisSource = source;
+    }
+    for (const auto& entry : migratedEntries) {
         bool linked = false;
         for (const auto& source : migratedSources)
             linked |= sourceNorads(source, migratedCache.value(source)).contains(entry.norad);
         if (!linked) {
-            const QString source = celestrakSource(entry.norad);
-            migratedSources.append(source);
+            const QString source = entry.ephemerisSource;
+            if (!migratedSources.contains(source))
+                migratedSources.append(source);
             for (auto it = cachedSources_.cbegin(); it != cachedSources_.cend(); ++it) {
                 if (isCelestrakSource(it.key()))
                     continue;
@@ -246,8 +290,12 @@ SatelliteTrackerDialog::SatelliteTrackerDialog(
         }
     }
     QString migrationError;
-    if (!saveLinkedState(catalog_.entries(), migratedSources, migratedCache,
-                          dismissedNorads_, &migrationError))
+    const bool migrationChanged =
+        migratedSources != sourceUrls_ || migratedCache != cachedSources_ ||
+        migratedEntries != catalog_.entries();
+    if (migrationChanged &&
+        !saveLinkedState(migratedEntries, migratedSources, migratedCache,
+                         dismissedNorads_, &migrationError))
         QMessageBox::warning(this, tr("无法保存星历"), migrationError);
     if (installEphemerides(cachedSources_.values(), cachedSources_.values()))
         status_->setText(tr("已载入本地星历，正在更新…"));
@@ -374,10 +422,8 @@ void SatelliteTrackerDialog::buildUi()
     status_ = new QLabel(QCoreApplication::translate("ASRTU", "等待更新"), sourceBox);
     status_->setWordWrap(true);
     updateButton_ = new QPushButton(tr("更新星历"), sourceBox);
-    auto* sourceButton = new QPushButton(tr("星历管理"), sourceBox);
     sourceLayout->addWidget(status_);
     sourceActions->addStretch(1);
-    sourceActions->addWidget(sourceButton);
     sourceActions->addWidget(updateButton_);
     sourceLayout->addLayout(sourceActions);
     root->addWidget(sourceBox);
@@ -399,7 +445,6 @@ void SatelliteTrackerDialog::buildUi()
 
     connect(updateButton_, &QPushButton::clicked, this, [this] { updateTle(); });
     connect(manageButton, &QPushButton::clicked, this, [this] { editCatalog(); });
-    connect(sourceButton, &QPushButton::clicked, this, [this] { editSources(); });
     connect(satellite_, qOverload<int>(&QComboBox::currentIndexChanged),
             this, [this] {
                 refreshFrequencyPresets(true);
@@ -435,13 +480,18 @@ void SatelliteTrackerDialog::buildUi()
     });
 }
 
+QString SatelliteTrackerDialog::settingsFilePath(bool integrated)
+{
+    const QString root = SatelliteCatalog::dataDirectory();
+    QDir().mkpath(root);
+    return QDir(root).filePath(integrated
+                                   ? QStringLiteral("tracker.ini")
+                                   : QStringLiteral("standalone-tracker.ini"));
+}
+
 void SatelliteTrackerDialog::loadSettings()
 {
-    QSettings settings(QStandardPaths::isTestModeEnabled() ? QSettings::IniFormat
-                                                         : QSettings::NativeFormat,
-                       QSettings::UserScope, QStringLiteral("TinyDoppler"),
-                       integrated_ ? QStringLiteral("Tracker")
-                                   : QStringLiteral("StandaloneTracker"));
+    QSettings settings(settingsFilePath(integrated_), QSettings::IniFormat);
     sourceUrls_ = settings.value(QStringLiteral("tle_sources"),
                                 SatelliteCatalog::defaultSources()).toStringList();
     for (const auto& source : settings.value(QStringLiteral("rediscover_sources")).toStringList()) {
@@ -456,40 +506,11 @@ void SatelliteTrackerDialog::loadSettings()
     }
     preferredSatellite_ = settings.value(QStringLiteral("satellite"),
                                          preferredSatellite_).toString();
-    if (!integrated_)
-        return;
-    QSettings legacy(QStringLiteral("ASRTU"), QStringLiteral("AstroSeriesTracker"));
-
-    // The legacy tracker stored one global frequency. Migrate it only to
-    // the satellite selected there, never to every newly selected satellite.
-    if (!settings.value(QStringLiteral("legacy_frequency_migrated"), false).toBool() &&
-        legacy.contains(QStringLiteral("frequency_mhz"))) {
-        const QString legacyName =
-            legacy.value(QStringLiteral("satellite")).toString();
-        const qint64 hz = qRound64(
-            legacy.value(QStringLiteral("frequency_mhz")).toDouble() * 1e6);
-        for (const SatelliteProfile& profile : catalog_.entries()) {
-            const QString currentName = normalizedSatellite(profile.name);
-            const QString oldName = normalizedSatellite(legacyName);
-            if (!oldName.isEmpty() && hz >= 1000000 &&
-                (currentName.contains(oldName) || oldName.contains(currentName))) {
-                QString error;
-                if (!catalog_.selectFrequency(profile.norad, hz, &error))
-                    QMessageBox::warning(this, tr("旧设置未迁移"), error);
-                break;
-            }
-        }
-        settings.setValue(QStringLiteral("legacy_frequency_migrated"), true);
-    }
 }
 
 bool SatelliteTrackerDialog::saveSettings(QString* error)
 {
-    QSettings settings(QStandardPaths::isTestModeEnabled() ? QSettings::IniFormat
-                                                         : QSettings::NativeFormat,
-                       QSettings::UserScope, QStringLiteral("TinyDoppler"),
-                       integrated_ ? QStringLiteral("Tracker")
-                                   : QStringLiteral("StandaloneTracker"));
+    QSettings settings(settingsFilePath(integrated_), QSettings::IniFormat);
     settings.setValue(QStringLiteral("tle_sources"), sourceUrls_);
     settings.setValue(QStringLiteral("rediscover_sources"), QStringList(rediscoverSources_.values()));
     QStringList dismissed;
@@ -579,6 +600,7 @@ void SatelliteTrackerDialog::updateTle()
     downloadIndex_ = 0;
     successfulDownloads_ = 0;
     downloadErrors_.clear();
+    failedSources_.clear();
     freshSources_.clear();
     pruneEphemerisCache();
     downloading_ = true;
@@ -620,9 +642,11 @@ void SatelliteTrackerDialog::downloadNextSource()
             return;
         }
         if (success) {
+            failedSources_.remove(source);
             freshSources_.insert(source, data);
             ++successfulDownloads_;
-        } else if (!success) {
+        } else {
+            failedSources_.insert(source);
             downloadErrors_.append(QStringLiteral("%1: %2")
                                        .arg(source, networkSucceeded
                                                         ? parseError
@@ -663,7 +687,10 @@ void SatelliteTrackerDialog::finishDownloads()
         supported.unite(sourceNorads(source, cache.value(source)));
     QList<SatelliteProfile> entries;
     for (const auto& entry : catalog_.entries()) {
-        if (supported.contains(entry.norad))
+        // A failed source must not delete its satellites from the catalog.
+        if (supported.contains(entry.norad) ||
+            failedSources_.contains(entry.ephemerisSource) ||
+            (successfulDownloads_ == 0 && sourceUrls_.contains(entry.ephemerisSource)))
             entries.append(entry);
     }
     QString saveError;
@@ -738,12 +765,17 @@ QSet<int> SatelliteTrackerDialog::sourceNorads(const QString& source,
                                               const QByteArray& payload)
 {
     QSet<int> result;
-    const QUrl url(source);
-    int norad = 0;
-    if (isCelestrakSource(source) &&
-        SatelliteCatalog::parseNorad(QUrlQuery(url).queryItemValue(QStringLiteral("CATNR")),
-                                     &norad))
-        result.insert(norad);
+    if (isEphemerisSourceUrl(source)) {
+        const QUrlQuery query((QUrl(source)));
+        int norad = 0;
+        for (const auto& key : {QStringLiteral("CATNR"), QStringLiteral("NORAD"),
+                                QStringLiteral("norad"), QStringLiteral("norad_id")}) {
+            if (SatelliteCatalog::parseNorad(query.queryItemValue(key), &norad)) {
+                result.insert(norad);
+                break;
+            }
+        }
+    }
     QVector<Satellite> parsed;
     QString error;
     if (!payload.isEmpty() && parseEphemeris(payload, &parsed, &error)) {
@@ -868,10 +900,37 @@ bool SatelliteTrackerDialog::saveLinkedState(
 bool SatelliteTrackerDialog::saveCatalogEntries(const QList<SatelliteProfile>& entries,
                                                  QString* error)
 {
+    QList<SatelliteProfile> normalizedEntries = entries;
+    QStringList sources;
+    for (auto& entry : normalizedEntries) {
+        QString source = entry.ephemerisSource.trimmed();
+        if (source.isEmpty()) {
+            for (const auto& candidate : sourceUrls_) {
+                if (sourceNorads(candidate, cachedSources_.value(candidate))
+                        .contains(entry.norad)) {
+                    source = candidate;
+                    break;
+                }
+            }
+        }
+        if (source.isEmpty()) {
+            source = QStringLiteral(
+                "https://celestrak.org/NORAD/elements/gp.php?CATNR=%1&FORMAT=JSON")
+                         .arg(entry.norad);
+        }
+        if (!isEphemerisSourceUrl(source)) {
+            if (error)
+                *error = tr("请输入有效的 http(s) TLE/OMM 星历链接：%1").arg(source);
+            return false;
+        }
+        entry.ephemerisSource = source;
+        if (!sources.contains(source))
+            sources.append(source);
+    }
     QSet<int> current;
     QSet<int> removed;
     auto dismissed = dismissedNorads_;
-    for (const auto& entry : entries) {
+    for (const auto& entry : normalizedEntries) {
         current.insert(entry.norad);
         dismissed.remove(entry.norad);
     }
@@ -881,26 +940,24 @@ bool SatelliteTrackerDialog::saveCatalogEntries(const QList<SatelliteProfile>& e
             dismissed.insert(entry.norad);
         }
     }
-    QStringList sources;
-    for (const auto& source : sourceUrls_) {
-        const auto members = sourceNorads(source, cachedSources_.value(source));
-        // Shared feeds stay while they still serve other satellites.
-        if (members.isEmpty() || !(members - removed).isEmpty())
-            sources.append(source);
-    }
-    for (const auto& entry : entries) {
-        if (!catalog_.find(entry.norad)) {
-            const auto source = celestrakSource(entry.norad);
-            if (!sources.contains(source))
-                sources.append(source);
+    auto cache = cachedSources_;
+    // Preserve cached orbital data when only the URL spelling changed.
+    for (const auto& source : sources) {
+        if (cache.contains(source))
+            continue;
+        for (auto it = cachedSources_.cbegin(); it != cachedSources_.cend(); ++it) {
+            if (orbitSourceIdentity(it.key()) == orbitSourceIdentity(source)) {
+                cache.insert(source, it.value());
+                break;
+            }
         }
     }
     const auto oldRediscover = rediscoverSources_;
     for (const auto& source : sources) {
-        if (!(sourceNorads(source, cachedSources_.value(source)) & removed).isEmpty())
+        if (!(sourceNorads(source, cache.value(source)) & removed).isEmpty())
             rediscoverSources_.remove(source);
     }
-    if (!saveLinkedState(entries, sources, cachedSources_, dismissed, error)) {
+    if (!saveLinkedState(normalizedEntries, sources, cache, dismissed, error)) {
         rediscoverSources_ = oldRediscover;
         return false;
     }
@@ -915,12 +972,12 @@ bool SatelliteTrackerDialog::saveSources(const QStringList& inputSources, QStrin
 {
     QStringList sources;
     for (const auto& source : inputSources) {
-        if (!isCelestrakSource(source.trimmed())) {
+        const auto trimmed = source.trimmed();
+        if (!isEphemerisSourceUrl(trimmed)) {
             if (error)
-                *error = tr("请使用 CelesTrak GP 星历来源：%1").arg(source);
+                *error = tr("请输入有效的 http(s) TLE/OMM 星历链接：%1").arg(source);
             return false;
         }
-        const auto trimmed = source.trimmed();
         if (!sources.contains(trimmed))
             sources.append(trimmed);
     }
@@ -936,13 +993,28 @@ bool SatelliteTrackerDialog::saveSources(const QStringList& inputSources, QStrin
             }
         }
     }
+    // Keep satellites whose own source is still selected (a new URL may not
+    // have been downloaded yet). Also keep entries advertised by a cached
+    // source. Removing a source therefore still removes satellites that were
+    // only supplied by that source.
     QSet<int> supported;
     for (const auto& source : sources)
         supported.unite(sourceNorads(source, cache.value(source)));
     QList<SatelliteProfile> entries;
     auto dismissed = dismissedNorads_;
-    for (const auto& entry : catalog_.entries()) {
-        if (supported.contains(entry.norad))
+    for (auto entry : catalog_.entries()) {
+        bool keep = supported.contains(entry.norad) ||
+                    sources.contains(entry.ephemerisSource);
+        if (!keep) {
+            for (const auto& source : sources) {
+                if (sourceNorads(source, cache.value(source)).contains(entry.norad)) {
+                    entry.ephemerisSource = source;
+                    keep = true;
+                    break;
+                }
+            }
+        }
+        if (keep)
             entries.append(entry);
         else
             dismissed.insert(entry.norad);
@@ -1231,6 +1303,33 @@ bool SatelliteTrackerDialog::installEphemerides(const QList<QByteArray>& sources
         QMessageBox::warning(this, tr("无法保存卫星设置"), catalogError);
         return false;
     }
+    auto linkedEntries = catalog_.entries();
+    bool linksChanged = false;
+    for (auto& entry : linkedEntries) {
+        if (!entry.ephemerisSource.isEmpty())
+            continue;
+        for (const auto& source : sourceUrls_) {
+            if (sourceNorads(source, cachedSources_.value(source)).contains(entry.norad)) {
+                entry.ephemerisSource = source;
+                linksChanged = true;
+                break;
+            }
+        }
+        if (entry.ephemerisSource.isEmpty()) {
+            entry.ephemerisSource = QStringLiteral(
+                "https://celestrak.org/NORAD/elements/gp.php?CATNR=%1&FORMAT=JSON")
+                                         .arg(entry.norad);
+            linksChanged = true;
+        }
+    }
+    if (linksChanged) {
+        catalog_.setEntries(linkedEntries);
+        QString linkError;
+        if (!catalog_.save(&linkError)) {
+            QMessageBox::warning(this, tr("无法保存卫星设置"), linkError);
+            return false;
+        }
+    }
     combined.erase(std::remove_if(combined.begin(), combined.end(), [this](const Satellite& sat) {
         return dismissedNorads_.contains(sat.tle.norad_id) || !catalog_.find(sat.tle.norad_id);
     }), combined.end());
@@ -1396,7 +1495,8 @@ void SatelliteTrackerDialog::editSources()
     auto* editor = new QLineEdit(&dialog);
     editor->setObjectName(QStringLiteral("ephemerisSourceUrl"));
     editor->setAccessibleName(tr("星历链接"));
-    editor->setPlaceholderText(QStringLiteral("https://celestrak.org/NORAD/elements/gp.php?..."));
+    editor->setPlaceholderText(QStringLiteral(
+        "https://example.org/tle.txt 或任意 http(s) TLE/OMM 链接"));
     layout->addWidget(linkLabel);
     layout->addWidget(editor);
     const auto selectedSource = [sources]() -> QTreeWidgetItem* {
@@ -1562,17 +1662,39 @@ void SatelliteTrackerDialog::publishDoppler(qint64 targetHz, qint64 correctionHz
 #ifdef Q_OS_WIN
     if (!mappingView_)
         return;
-    std::memset(mappingView_, 0, 64);
+    auto* sequence = reinterpret_cast<volatile LONG*>(mappingView_ + 36);
+    // Keep the V1 fields, publishing each update under a seqlock. Recover
+    // from an interrupted previous writer as well as a newly created map.
+    const LONG previous = *sequence;
+    InterlockedExchange(sequence, (previous & ~1L) + 1);
     *reinterpret_cast<quint32*>(mappingView_ + 0) = kDopplerMagic;
     *reinterpret_cast<quint32*>(mappingView_ + 4) = 1;
     *reinterpret_cast<qint64*>(mappingView_ + 8) = targetHz;
     *reinterpret_cast<qint64*>(mappingView_ + 16) = correctionHz;
     *reinterpret_cast<qint64*>(mappingView_ + 24) = QDateTime::currentMSecsSinceEpoch();
     *reinterpret_cast<qint32*>(mappingView_ + 32) = valid ? 1 : 0;
-    MemoryBarrier();
+    InterlockedExchange(sequence, (previous & ~1L) + 2);
 #else
-    Q_UNUSED(targetHz)
+    publishRigctl(targetHz, valid);
     Q_UNUSED(correctionHz)
-    Q_UNUSED(valid)
 #endif
 }
+
+#ifndef Q_OS_WIN
+// The existing Linux input still uses Network/Rigctl until it has a native
+// shared-memory transport. Windows control goes exclusively through the bridge.
+void SatelliteTrackerDialog::publishRigctl(qint64 targetHz, bool valid)
+{
+    if (!integrated_ || !rigctl_ || !valid || targetHz <= 0)
+        return;
+    if (rigctl_->state() == QAbstractSocket::UnconnectedState) {
+        rigctl_->connectToHost(rigctl_->property("host").toString(),
+                               static_cast<quint16>(rigctl_->property("port").toInt()));
+        return;
+    }
+    if (rigctl_->state() != QAbstractSocket::ConnectedState)
+        return;
+    rigctl_->write(QByteArray("F ") + QByteArray::number(targetHz) + QByteArray("\n"));
+    rigctl_->flush();
+}
+#endif

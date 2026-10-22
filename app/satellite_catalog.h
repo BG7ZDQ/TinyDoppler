@@ -11,6 +11,20 @@ struct SatelliteProfile {
     QList<qint64> frequenciesHz;
     qint64 selectedHz = 0;
     QMap<qint64, QString> frequencyNotes = {};
+    QString ephemerisSource;
+
+    bool operator==(const SatelliteProfile& other) const
+    {
+        return norad == other.norad && name == other.name &&
+               frequenciesHz == other.frequenciesHz &&
+               selectedHz == other.selectedHz &&
+               frequencyNotes == other.frequencyNotes &&
+               ephemerisSource == other.ephemerisSource;
+    }
+    bool operator!=(const SatelliteProfile& other) const
+    {
+        return !(*this == other);
+    }
 
     QString frequencyLabel(qint64 hz) const
     {
@@ -22,6 +36,8 @@ struct SatelliteProfile {
 
 class SatelliteCatalog {
 public:
+    // User data lives beside the receiver's main folder, not under AppData.
+    static QString dataDirectory();
     static QString filePath();
     static QStringList defaultSources();
     static bool parseNorad(const QString& input, int* number);
