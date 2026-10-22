@@ -2,7 +2,7 @@
 
 `SDRSharp.AstroSeriesBridge.dll` is an optional plugin for SDR# Studio v1920 (x86, .NET Framework 4.6). It is not required to run Tiny Doppler or the ASRTU receiver.
 
-Copy the DLL into the compatible SDR# installation's `Plugins` directory, then restart SDR#. The panel appears as **Tiny Doppler**. Enable **Send I/Q to receiver** to publish SDR# RAW I/Q to the local receiver. Enable **Automatic Doppler tuning** only when desired; it follows the frequency calculated by the Tiny Doppler application. Automatic tuning is off by default.
+Copy the DLL into the compatible SDR# installation's `Plugins` directory, then restart SDR#. The panel appears as **Tiny Doppler**. **Enable shared-memory bridge** and **Automatic Doppler tuning** are enabled by default; the bridge publishes SDR# RAW I/Q and the tuning follows the frequency calculated by the Tiny Doppler application. The panel starts in English and has an English/中文/日本語 language selector.
 
 The plugin does not contain SDR# or its API assemblies. Use a matching SDR# installation; other API versions are not guaranteed to work.
 

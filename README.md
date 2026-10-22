@@ -30,20 +30,21 @@ tuning and I/Q delivery require the Windows plugin.
    valid local cache remains available.
 
 Satellite names, NORAD IDs, frequencies, and each satellite's selected
-frequency are stored in the user configuration directory as `satellites.json`.
-The standalone catalog starts empty. Downloads add newly discovered satellites
-by NORAD number without changing existing names or frequency settings. New
-satellites have no frequency until the user supplies one. Writes are atomic.
-ASRTU receiver presets belong to the receiver repository and are embedded only
-by its build. Standalone configuration and cache are separate from the receiver.
-Existing receiver configuration files are left in place.
+frequency are stored in `satellites.json`. The standalone catalog starts empty.
+Downloads add newly discovered satellites by NORAD number without changing
+existing names or frequency settings. New satellites have no frequency until
+the user supplies one. Writes are atomic and keep the previous file as
+`satellites.json.bak`.
 Orbit data is cached per source; an unavailable source does not discard its
 previously downloaded data when other sources update successfully.
 
-The exact configuration path is the platform's Qt
-`QStandardPaths::AppConfigLocation` for `TinyDopplerStandalone` (standalone)
-or `TinyDoppler` (receiver). It is
-not placed beside the executable, because that directory may be read-only.
+On Windows the receiver keeps `satellites.json`, `tracker.ini` and
+`ephemerides.json` in the installed main directory, beside `decoder/`,
+`doppler/` and `launcher/`; a standalone or portable build uses the executable
+directory. On Linux and macOS the application uses Qt's
+`QStandardPaths::AppConfigLocation`, because the executable directory is usually
+read-only or an ephemeral AppImage mount. `TINY_DOPPLER_CONFIG_DIR` can override
+the location with an absolute path.
 
 ## Build the app
 
@@ -74,7 +75,8 @@ an existing compatible SDR# installation or API directory:
 
 Copy the resulting `plugin/bin/Release/net46/SDRSharp.AstroSeriesBridge.dll`
 to the SDR# `Plugins` directory. The plugin can be used independently of the
-ASRTU receiver. Its automatic Doppler setting is saved per Windows user.
+ASRTU receiver. The bridge and automatic Doppler tuning are enabled by default;
+the panel starts in English and offers an English/中文/日本語 selector.
 
 The bridge protocols are documented in [docs/INTERFACES.md](docs/INTERFACES.md).
 Third-party notices are in [THIRD_PARTY.md](THIRD_PARTY.md).

@@ -1610,6 +1610,13 @@ void SatelliteTrackerDialog::updateTracking()
     if (sgp4_propagate(&sat.state, (jd - sat.tle.epoch_jd) * 1440.0, &result) !=
         SGP4_SUCCESS) {
         status_->setText(tr("轨道计算失败"));
+        received_->setText(tr("轨道计算失败"));
+        azimuth_->setText(QStringLiteral("--"));
+        elevation_->setText(QStringLiteral("--"));
+        range_->setText(QStringLiteral("--"));
+        correction_->setText(QStringLiteral("--"));
+        downlink_->setText(QStringLiteral("--"));
+        tleEpoch_->setText(QStringLiteral("--"));
         publishDoppler(0, 0, false);
         return;
     }

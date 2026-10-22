@@ -101,7 +101,9 @@ Generated sources use CelesTrak GP feeds over HTTPS with `FORMAT=JSON`.
 User-entered CelesTrak URLs are preserved after trimming outer whitespace,
 including omitted FORMAT parameters and explicit TLE formats, across saves,
 downloads and restarts. Equivalent host/format edits retain cached satellite
-bindings and frequencies. The source editor rejects non-CelesTrak feeds.
+bindings and frequencies. The source editor accepts any valid HTTP(S) TLE or
+CelesTrak GP/OMM feed URL; non-CelesTrak providers are stored and refreshed like
+the built-in sources.
 On startup, older providers are replaced by per-satellite CelesTrak feeds for
 the saved catalog; valid cached orbits remain available until refresh.
 

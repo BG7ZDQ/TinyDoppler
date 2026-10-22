@@ -2,6 +2,7 @@
 
 #include <QCoreApplication>
 #include <QDir>
+#include <QStandardPaths>
 #include <QFile>
 #include <QFileInfo>
 #include <QJsonArray>
@@ -49,6 +50,18 @@ QString SatelliteCatalog::dataDirectory()
         QFileInfo::exists(mainDirectory.filePath(
             QStringLiteral("launcher/ASRTU1_Launcher.exe"))))
         return mainDirectory.absolutePath();
+#ifndef Q_OS_WIN
+    // Linux/macOS installs put the executable in a read-only or ephemeral
+    // prefix (for example /usr/bin or an AppImage mount). Keep user data in
+    // the platform configuration directory there instead of the executable's
+    // directory; the Windows build remains fully portable beside the app.
+    const QString configDirectory = QStandardPaths::writableLocation(
+        QStandardPaths::AppConfigLocation);
+    if (!configDirectory.isEmpty()) {
+        QDir().mkpath(configDirectory);
+        return configDirectory;
+    }
+#endif
     return executableDirectory.absolutePath();
 }
 
@@ -311,6 +324,13 @@ bool SatelliteCatalog::save(QString* error) const
         if (error) *error = QStringLiteral("Cannot create configuration directory.");
         return false;
     }
+    // Keep the previous catalog recoverable. A malformed/future catalog is
+    // otherwise silently replaced by the auto-discovered cache on next start.
+    if (QFile::exists(path)) {
+        const QString backup = path + QStringLiteral(".bak");
+        QFile::remove(backup);
+        QFile::copy(path, backup);
+    }
     QJsonArray satellites;
     for (const SatelliteProfile& profile : entries_) {
         QJsonArray frequencies;
@@ -371,6 +391,7 @@ bool SatelliteCatalog::mergeDiscovered(const QList<SatelliteProfile>& discovered
                                        QString* error)
 {
     const auto previous = entries_;
+    bool changed = false;
     QSet<int> known;
     for (const auto& entry : entries_)
         known.insert(entry.norad);
@@ -380,8 +401,10 @@ bool SatelliteCatalog::mergeDiscovered(const QList<SatelliteProfile>& discovered
         if (known.contains(satellite.norad)) {
             for (auto& entry : entries_) {
                 if (entry.norad == satellite.norad && entry.name.trimmed().isEmpty() &&
-                    !satellite.name.trimmed().isEmpty())
+                    !satellite.name.trimmed().isEmpty()) {
                     entry.name = satellite.name.trimmed().left(120);
+                    changed = true;
+                }
             }
             continue;
         }
@@ -391,8 +414,9 @@ bool SatelliteCatalog::mergeDiscovered(const QList<SatelliteProfile>& discovered
         // Orbital elements do not provide a radio frequency.
         entries_.append({satellite.norad, name, {}, 0});
         known.insert(satellite.norad);
+        changed = true;
     }
-    if (entries_.size() == previous.size() || save(error))
+    if (!changed || save(error))
         return true;
     entries_ = previous;
     return false;
