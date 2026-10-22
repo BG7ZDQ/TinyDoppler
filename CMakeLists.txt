@@ -96,3 +96,10 @@ if(BUILD_TESTING)
     set_tests_properties(tiny_workflow_test PROPERTIES
         ENVIRONMENT "QT_QPA_PLATFORM=${TINY_DOPPLER_TEST_QPA_PLATFORM}" TIMEOUT 60)
 endif()
+
+if(BUILD_TESTING)
+    add_executable(tiny_radio_frequency_test tests/radio_frequency_test.cpp)
+    target_include_directories(tiny_radio_frequency_test PRIVATE app)
+    target_link_libraries(tiny_radio_frequency_test PRIVATE Qt5::Core Qt5::Network)
+    add_test(NAME tiny_radio_frequency_test COMMAND tiny_radio_frequency_test)
+endif()

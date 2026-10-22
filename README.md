@@ -80,3 +80,19 @@ the panel starts in English and offers an English/中文/日本語 selector.
 
 The bridge protocols are documented in [docs/INTERFACES.md](docs/INTERFACES.md).
 Third-party notices are in [THIRD_PARTY.md](THIRD_PARTY.md).
+
+## Physical radio control
+
+The **电台控频… / Radio frequency…** dialog optionally connects to a Hamlib
+`rigctld` already configured for the receiver model and serial port. The default
+radio endpoint is `127.0.0.1:4534`, separate from the existing SDR++ endpoint
+on 4532. Only `F <corrected receive frequency in Hz>` is sent on valid tracking
+ticks. There are no extra start/stop, acknowledgement or VFO controls. Select
+the intended receive VFO on the radio and run rigctld without explicit VFO mode.
+The feature defaults to disabled and does not replace existing SDR integration.
+
+Example for IC-705 (verify model IDs with the installed `rigctl -l`):
+`rigctld -m 3085 -r COM4 -s 19200 -T 127.0.0.1 -t 4534`.
+IC-9700 uses model 3081; substitute the actual serial port and baud rate.
+Linux ports typically use `/dev/ttyUSB*`; macOS uses `/dev/cu.*`.
+See the [Hamlib protocol manual](https://hamlib.sourceforge.net/html/rigctld.1.html).

@@ -12,6 +12,7 @@
 
 #include "sgp4.h"
 
+class RadioFrequencyClient;
 class QComboBox;
 class QDoubleSpinBox;
 class QLabel;
@@ -81,6 +82,7 @@ private:
     void editCatalog();
     void editSources();
     void editStation();
+    void editRadio();
     void refreshStationLabel();
     void publishDoppler(qint64 targetHz, qint64 correctionHz, bool valid);
 #ifndef Q_OS_WIN
@@ -128,6 +130,10 @@ private:
     QNetworkAccessManager* network_ = nullptr;
     RequestFactory requestFactory_;
     QTimer* timer_ = nullptr;
+    RadioFrequencyClient *radio_ = nullptr;
+    bool radioEnabled_ = false;
+    QString radioHost_ = QStringLiteral("127.0.0.1");
+    quint16 radioPort_ = 4534;
 #ifndef Q_OS_WIN
     QTcpSocket* rigctl_ = nullptr;
 #endif

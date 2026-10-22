@@ -399,4 +399,16 @@ The source has been kept. Click “Update orbit data” to retry.
         <translation>Could not save orbit source settings.</translation>
     </message>
 </context>
+<context>
+    <name>SatelliteTrackerDialog</name>
+    <message><source>电台控频…</source><translation>Radio frequency…</translation></message>
+    <message><source>电台控频</source><translation>Radio frequency control</translation></message>
+    <message><source>通过 Hamlib rigctld 控制电台</source><translation>Control radio through Hamlib rigctld</translation></message>
+    <message><source>地址</source><translation>Host</translation></message>
+    <message><source>端口</source><translation>Port</translation></message>
+    <message><source>请输入 rigctld 地址。</source><translation>Enter the rigctld host.</translation></message>
+    <message><source>连接已配置好电台型号和串口的 rigctld。
+电台使用独立端口（默认 4534），SDR 控频保持原有设置。</source><translation>Connect to rigctld configured for your radio model and serial port.
+Use a separate port (default 4534); SDR tuning keeps its existing settings.</translation></message>
+</context>
 </TS>

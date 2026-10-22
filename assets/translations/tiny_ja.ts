@@ -399,4 +399,16 @@
         <translation>軌道データの取得元設定を保存できません。</translation>
     </message>
 </context>
+<context>
+    <name>SatelliteTrackerDialog</name>
+    <message><source>电台控频…</source><translation>無線機の周波数…</translation></message>
+    <message><source>电台控频</source><translation>無線機の周波数制御</translation></message>
+    <message><source>通过 Hamlib rigctld 控制电台</source><translation>Hamlib rigctld で無線機を制御</translation></message>
+    <message><source>地址</source><translation>ホスト</translation></message>
+    <message><source>端口</source><translation>ポート</translation></message>
+    <message><source>请输入 rigctld 地址。</source><translation>rigctld のホストを入力してください。</translation></message>
+    <message><source>连接已配置好电台型号和串口的 rigctld。
+电台使用独立端口（默认 4534），SDR 控频保持原有设置。</source><translation>機種とシリアルポートを設定した rigctld に接続します。
+専用ポート（既定 4534）を使用し、SDR の制御設定は維持します。</translation></message>
+</context>
 </TS>

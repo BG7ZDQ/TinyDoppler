@@ -1,3 +1,6 @@
+#include "radio_frequency_client.h"
+#include <QCheckBox>
+#include <QSpinBox>
 #include "satellite_tracker_dialog.h"
 #include "catalog_dialog.h"
 
@@ -171,7 +174,9 @@ SatelliteTrackerDialog::SatelliteTrackerDialog(
         QMessageBox::critical(this, tr("无法保存卫星设置"),
                               tr("无法创建卫星配置文件：%1").arg(catalogError));
     }
+    radio_ = new RadioFrequencyClient(this);
     loadSettings();
+    radio_->configure(radioEnabled_, radioHost_, radioPort_);
     refreshSatelliteChoices();
     adjustSize();
     setMinimumSize(500, 530);
@@ -410,6 +415,9 @@ void SatelliteTrackerDialog::buildUi()
     selection->addRow(QCoreApplication::translate("ASRTU", "标称下行"), frequencyMHz_);
     auto* manageButton = new QPushButton(tr("卫星与频率管理>"), selectionBox);
     selection->addRow(QString(), manageButton);
+    auto *radioButton = new QPushButton(tr("电台控频…"), selectionBox);
+    selection->addRow(QString(), radioButton);
+    connect(radioButton, &QPushButton::clicked, this, [this] { editRadio(); });
     root->addWidget(selectionBox);
 
     auto* sourceBox = new QGroupBox(this);
@@ -492,6 +500,14 @@ QString SatelliteTrackerDialog::settingsFilePath(bool integrated)
 void SatelliteTrackerDialog::loadSettings()
 {
     QSettings settings(settingsFilePath(integrated_), QSettings::IniFormat);
+    radioEnabled_ =
+	settings.value(QStringLiteral("radio/enabled"), false).toBool();
+    radioHost_ =
+	settings
+	    .value(QStringLiteral("radio/host"), QStringLiteral("127.0.0.1"))
+	    .toString();
+    const int port = settings.value(QStringLiteral("radio/port"), 4534).toInt();
+    radioPort_ = quint16(port > 0 && port <= 65535 ? port : 4534);
     sourceUrls_ = settings.value(QStringLiteral("tle_sources"),
                                 SatelliteCatalog::defaultSources()).toStringList();
     for (const auto& source : settings.value(QStringLiteral("rediscover_sources")).toStringList()) {
@@ -511,6 +527,9 @@ void SatelliteTrackerDialog::loadSettings()
 bool SatelliteTrackerDialog::saveSettings(QString* error)
 {
     QSettings settings(settingsFilePath(integrated_), QSettings::IniFormat);
+    settings.setValue(QStringLiteral("radio/enabled"), radioEnabled_);
+    settings.setValue(QStringLiteral("radio/host"), radioHost_);
+    settings.setValue(QStringLiteral("radio/port"), radioPort_);
     settings.setValue(QStringLiteral("tle_sources"), sourceUrls_);
     settings.setValue(QStringLiteral("rediscover_sources"), QStringList(rediscoverSources_.values()));
     QStringList dismissed;
@@ -537,6 +556,49 @@ void SatelliteTrackerDialog::refreshStationLabel()
             .arg(longitudeDeg_, 0, 'f', 5)
             .arg(latitudeDeg_, 0, 'f', 5)
             .arg(altitudeMeters_, 0, 'f', 1));
+}
+
+void SatelliteTrackerDialog::editRadio()
+{
+	QDialog dialog(this);
+	dialog.setWindowTitle(tr("电台控频"));
+	QFormLayout layout(&dialog);
+	QCheckBox enabled(tr("通过 Hamlib rigctld 控制电台"), &dialog);
+	enabled.setChecked(radioEnabled_);
+	QLineEdit host(radioHost_, &dialog);
+	QSpinBox port(&dialog);
+	port.setRange(1, 65535);
+	port.setValue(radioPort_);
+	QLabel hint(
+	    tr("连接已配置好电台型号和串口的 rigctld。\n电台使用独立端口（默认 "
+	       "4534），SDR 控频保持原有设置。"),
+	    &dialog);
+	hint.setWordWrap(true);
+	layout.addRow(&hint);
+	layout.addRow(&enabled);
+	layout.addRow(tr("地址"), &host);
+	layout.addRow(tr("端口"), &port);
+	QDialogButtonBox buttons(
+	    QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
+	layout.addRow(&buttons);
+	connect(&buttons, &QDialogButtonBox::accepted, &dialog,
+		&QDialog::accept);
+	connect(&buttons, &QDialogButtonBox::rejected, &dialog,
+		&QDialog::reject);
+	if (dialog.exec() != QDialog::Accepted)
+		return;
+	if (host.text().trimmed().isEmpty()) {
+		QMessageBox::warning(this, tr("电台控频"),
+				     tr("请输入 rigctld 地址。"));
+		return;
+	}
+	radioEnabled_ = enabled.isChecked();
+	radioHost_ = host.text().trimmed();
+	radioPort_ = quint16(port.value());
+	radio_->configure(radioEnabled_, radioHost_, radioPort_);
+	QString error;
+	if (!saveSettings(&error))
+		QMessageBox::warning(this, tr("电台控频"), error);
 }
 
 void SatelliteTrackerDialog::editStation()
@@ -1667,6 +1729,8 @@ void SatelliteTrackerDialog::updateTracking()
 void SatelliteTrackerDialog::publishDoppler(qint64 targetHz, qint64 correctionHz,
                                              bool valid)
 {
+	if (radio_)
+		radio_->publish(targetHz, valid);
 #ifdef Q_OS_WIN
     if (!mappingView_)
         return;
