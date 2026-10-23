@@ -447,9 +447,6 @@ void SatelliteTrackerDialog::buildUi()
     selection->addRow(QCoreApplication::translate("ASRTU", "标称下行"), frequencyMHz_);
     auto* manageButton = new QPushButton(tr("卫星与频率管理>"), selectionBox);
     selection->addRow(QString(), manageButton);
-    auto *radioButton = new QPushButton(tr("电台控频…"), selectionBox);
-    selection->addRow(QString(), radioButton);
-    connect(radioButton, &QPushButton::clicked, this, [this] { editRadio(); });
     root->addWidget(selectionBox);
 
     auto* sourceBox = new QGroupBox(this);
@@ -462,9 +459,12 @@ void SatelliteTrackerDialog::buildUi()
     status_ = new QLabel(QCoreApplication::translate("ASRTU", "等待更新"), sourceBox);
     status_->setWordWrap(true);
     updateButton_ = new QPushButton(tr("更新星历"), sourceBox);
+    auto* radioButton = new QPushButton(tr("电台控频…"), sourceBox);
     sourceLayout->addWidget(status_);
     sourceActions->addStretch(1);
     sourceActions->addWidget(updateButton_);
+    sourceActions->addWidget(radioButton);
+    connect(radioButton, &QPushButton::clicked, this, [this] { editRadio(); });
     sourceLayout->addLayout(sourceActions);
     root->addWidget(sourceBox);
 
