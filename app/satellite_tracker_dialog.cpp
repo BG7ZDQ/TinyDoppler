@@ -37,6 +37,7 @@
 #include <QStandardPaths>
 #include <QTimer>
 #ifndef Q_OS_WIN
+#include "doppler_control_record.h"
 #include <fcntl.h>
 #include <sys/file.h>
 #include <sys/mman.h>
@@ -61,7 +62,9 @@ namespace {
 constexpr double kPi = 3.14159265358979323846;
 constexpr double kEarthRotationRadSec = 7.2921150e-5;
 constexpr double kLightKmSec = 299792.458;
+#ifdef Q_OS_WIN
 constexpr quint32 kDopplerMagic = 0x504f4441U;
+#endif
 
 QString normalizedSatellite(QString value)
 {
@@ -1781,23 +1784,7 @@ void SatelliteTrackerDialog::publishDoppler(qint64 targetHz, qint64 correctionHz
 #else
     if (!dopplerView_)
         return;
-    auto* sequence = reinterpret_cast<qint32*>(dopplerView_ + 36);
-    const qint32 previous =
-        __atomic_load_n(sequence, __ATOMIC_RELAXED);
-    __atomic_store_n(sequence, (previous & ~1) + 1, __ATOMIC_RELAXED);
-    __atomic_store_n(reinterpret_cast<quint32*>(dopplerView_ + 0),
-                     kDopplerMagic, __ATOMIC_RELAXED);
-    __atomic_store_n(reinterpret_cast<quint32*>(dopplerView_ + 4), 1U,
-                     __ATOMIC_RELAXED);
-    __atomic_store_n(reinterpret_cast<qint64*>(dopplerView_ + 8),
-                     targetHz, __ATOMIC_RELAXED);
-    __atomic_store_n(reinterpret_cast<qint64*>(dopplerView_ + 16),
-                     correctionHz, __ATOMIC_RELAXED);
-    __atomic_store_n(reinterpret_cast<qint64*>(dopplerView_ + 24),
-                     QDateTime::currentMSecsSinceEpoch(),
-                     __ATOMIC_RELAXED);
-    __atomic_store_n(reinterpret_cast<qint32*>(dopplerView_ + 32),
-                     valid ? 1 : 0, __ATOMIC_RELAXED);
-    __atomic_store_n(sequence, (previous & ~1) + 2, __ATOMIC_RELEASE);
+    tiny_doppler::publishControlRecord(dopplerView_, targetHz, correctionHz,
+                                      QDateTime::currentMSecsSinceEpoch(), valid);
 #endif
 }

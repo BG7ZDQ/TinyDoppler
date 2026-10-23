@@ -411,4 +411,22 @@
 电台使用独立端口（默认 4534），SDR 控频保持原有设置。</source><translation>機種とシリアルポートを設定した rigctld に接続します。
 専用ポート（既定 4534）を使用し、SDR の制御設定は維持します。</translation></message>
 </context>
+<context>
+    <name>CatalogDialog</name>
+    <message><source>星历链接</source><translation>軌道データの URL</translation></message>
+    <message><source>下行频率</source><translation>ダウンリンク周波数</translation></message>
+    <message><source>NORAD %1</source><translation>NORAD %1</translation></message>
+    <message><source>TLE / 星历链接</source><translation>TLE / 軌道データの URL</translation></message>
+    <message><source>请输入有效的 http(s) TLE/OMM 星历链接。</source><translation>有効な HTTP(S) の TLE/OMM 軌道データ URL を入力してください。</translation></message>
+    <message><source>TLE 链接中的 CATNR 是 %1，但 NORAD 是 %2。</source><translation>TLE URL の CATNR は %1 ですが、NORAD 番号は %2 です。</translation></message>
+    <message><source>请填写 NORAD 编号，或填写带 CATNR 的 TLE/星历链接。</source><translation>NORAD 番号、または CATNR を含む TLE/軌道データ URL を入力してください。</translation></message>
+    <message><source>请输入有效的 NORAD 编号。</source><translation>有効な NORAD 番号を入力してください。</translation></message>
+    <message><source>星历链接无效</source><translation>無効な軌道データ URL</translation></message>
+    <message><source>NORAD 不一致</source><translation>NORAD 番号の不一致</translation></message>
+    <message><source>TLE 链接中的 CATNR 是 %1，但卫星 NORAD 是 %2。</source><translation>TLE URL の CATNR は %1 ですが、衛星の NORAD 番号は %2 です。</translation></message>
+</context>
+<context>
+    <name>SatelliteTrackerDialog</name>
+    <message><source>请输入有效的 http(s) TLE/OMM 星历链接：%1</source><translation>有効な HTTP(S) の TLE/OMM 軌道データ URL を入力してください：%1</translation></message>
+</context>
 </TS>

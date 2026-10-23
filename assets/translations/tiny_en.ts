@@ -411,4 +411,22 @@ The source has been kept. Click “Update orbit data” to retry.
 电台使用独立端口（默认 4534），SDR 控频保持原有设置。</source><translation>Connect to rigctld configured for your radio model and serial port.
 Use a separate port (default 4534); SDR tuning keeps its existing settings.</translation></message>
 </context>
+<context>
+    <name>CatalogDialog</name>
+    <message><source>星历链接</source><translation>Orbit data URL</translation></message>
+    <message><source>下行频率</source><translation>Downlink frequency</translation></message>
+    <message><source>NORAD %1</source><translation>NORAD %1</translation></message>
+    <message><source>TLE / 星历链接</source><translation>TLE / orbit data URL</translation></message>
+    <message><source>请输入有效的 http(s) TLE/OMM 星历链接。</source><translation>Enter a valid HTTP(S) URL for TLE/OMM orbit data.</translation></message>
+    <message><source>TLE 链接中的 CATNR 是 %1，但 NORAD 是 %2。</source><translation>The TLE URL specifies CATNR %1, but the NORAD ID is %2.</translation></message>
+    <message><source>请填写 NORAD 编号，或填写带 CATNR 的 TLE/星历链接。</source><translation>Enter a NORAD ID or a TLE/orbit data URL containing CATNR.</translation></message>
+    <message><source>请输入有效的 NORAD 编号。</source><translation>Enter a valid NORAD ID.</translation></message>
+    <message><source>星历链接无效</source><translation>Invalid orbit data URL</translation></message>
+    <message><source>NORAD 不一致</source><translation>NORAD ID mismatch</translation></message>
+    <message><source>TLE 链接中的 CATNR 是 %1，但卫星 NORAD 是 %2。</source><translation>The TLE URL specifies CATNR %1, but the satellite NORAD ID is %2.</translation></message>
+</context>
+<context>
+    <name>SatelliteTrackerDialog</name>
+    <message><source>请输入有效的 http(s) TLE/OMM 星历链接：%1</source><translation>Enter a valid HTTP(S) URL for TLE/OMM orbit data: %1</translation></message>
+</context>
 </TS>
