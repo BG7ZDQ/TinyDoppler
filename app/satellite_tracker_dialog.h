@@ -23,10 +23,6 @@ class QPushButton;
 class QTimer;
 class QUrl;
 
-#ifndef Q_OS_WIN
-class QTcpSocket;
-#endif
-
 class SatelliteTrackerDialog final : public QDialog
 {
     Q_OBJECT
@@ -85,9 +81,6 @@ private:
     void editRadio();
     void refreshStationLabel();
     void publishDoppler(qint64 targetHz, qint64 correctionHz, bool valid);
-#ifndef Q_OS_WIN
-    void publishRigctl(qint64 targetHz, bool valid);
-#endif
 
     double longitudeDeg_;
     double latitudeDeg_;
@@ -134,12 +127,12 @@ private:
     bool radioEnabled_ = false;
     QString radioHost_ = QStringLiteral("127.0.0.1");
     quint16 radioPort_ = 4534;
-#ifndef Q_OS_WIN
-    QTcpSocket* rigctl_ = nullptr;
-#endif
 
 #ifdef Q_OS_WIN
     void* mappingHandle_ = nullptr;
     unsigned char* mappingView_ = nullptr;
+#else
+    int dopplerFd_ = -1;
+    unsigned char* dopplerView_ = nullptr;
 #endif
 };

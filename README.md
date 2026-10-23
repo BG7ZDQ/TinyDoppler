@@ -85,11 +85,11 @@ Third-party notices are in [THIRD_PARTY.md](THIRD_PARTY.md).
 
 The **电台控频… / Radio frequency…** dialog optionally connects to a Hamlib
 `rigctld` already configured for the receiver model and serial port. The default
-radio endpoint is `127.0.0.1:4534`, separate from the existing SDR++ endpoint
-on 4532. Only `F <corrected receive frequency in Hz>` is sent on valid tracking
-ticks. There are no extra start/stop, acknowledgement or VFO controls. Select
-the intended receive VFO on the radio and run rigctld without explicit VFO mode.
-The feature defaults to disabled and does not replace existing SDR integration.
+radio endpoint is `127.0.0.1:4534`. Only `F <corrected receive frequency in Hz>`
+is sent on valid tracking ticks. SDR# and SDR++ are controlled through the
+shared-memory record, not through this endpoint. There are no extra start/stop,
+acknowledgement or VFO controls. Select the intended receive VFO on the radio
+and run rigctld without explicit VFO mode. The feature defaults to disabled.
 
 Example for IC-705 (verify model IDs with the installed `rigctl -l`):
 `rigctld -m 3085 -r COM4 -s 19200 -T 127.0.0.1 -t 4534`.

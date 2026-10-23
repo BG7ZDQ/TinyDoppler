@@ -37,7 +37,11 @@
 #include <QStandardPaths>
 #include <QTimer>
 #ifndef Q_OS_WIN
-#include <QTcpSocket>
+#include <fcntl.h>
+#include <sys/file.h>
+#include <sys/mman.h>
+#include <sys/stat.h>
+#include <unistd.h>
 #endif
 #include <QTreeWidget>
 #include <QUrl>
@@ -195,10 +199,31 @@ SatelliteTrackerDialog::SatelliteTrackerDialog(
     connect(timer_, &QTimer::timeout, this, [this] { updateTracking(); });
     timer_->start(500);
 #ifndef Q_OS_WIN
-    if (integrated_) {
-        rigctl_ = new QTcpSocket(this);
-        rigctl_->setProperty("host", QStringLiteral("127.0.0.1"));
-        rigctl_->setProperty("port", 4532);
+    // Native SDR++ tuning uses the same 64-byte control record as Windows.
+    // Physical radios are separate: they use the optional Hamlib rigctld
+    // client in RadioFrequencyClient and must never share this path.
+    if (!QStandardPaths::isTestModeEnabled()) {
+        const QByteArray path =
+            QByteArrayLiteral("/tmp/asrtu-doppler-") +
+            QByteArray::number(qint64(::getuid())) + ".v1";
+        dopplerFd_ = ::open(path.constData(),
+                            O_RDWR | O_CREAT | O_CLOEXEC | O_NOFOLLOW, 0600);
+        struct stat info = {};
+        if (dopplerFd_ >= 0 && !fstat(dopplerFd_, &info) &&
+            S_ISREG(info.st_mode) && info.st_uid == ::getuid() &&
+            !flock(dopplerFd_, LOCK_EX | LOCK_NB) &&
+            !ftruncate(dopplerFd_, 64)) {
+            void* view = mmap(nullptr, 64, PROT_READ | PROT_WRITE,
+                              MAP_SHARED, dopplerFd_, 0);
+            if (view != MAP_FAILED) {
+                dopplerView_ = static_cast<unsigned char*>(view);
+                std::memset(dopplerView_, 0, 64);
+            }
+        }
+        if (!dopplerView_ && dopplerFd_ >= 0) {
+            ::close(dopplerFd_);
+            dopplerFd_ = -1;
+        }
     }
 #endif
 
@@ -330,6 +355,13 @@ SatelliteTrackerDialog::~SatelliteTrackerDialog()
         UnmapViewOfFile(mappingView_);
     if (mappingHandle_)
         CloseHandle(mappingHandle_);
+#else
+    if (dopplerView_)
+        munmap(dopplerView_, 64);
+    if (dopplerFd_ >= 0)
+        ::close(dopplerFd_);
+    dopplerView_ = nullptr;
+    dopplerFd_ = -1;
 #endif
 }
 
@@ -1747,26 +1779,25 @@ void SatelliteTrackerDialog::publishDoppler(qint64 targetHz, qint64 correctionHz
     *reinterpret_cast<qint32*>(mappingView_ + 32) = valid ? 1 : 0;
     InterlockedExchange(sequence, (previous & ~1L) + 2);
 #else
-    publishRigctl(targetHz, valid);
-    Q_UNUSED(correctionHz)
+    if (!dopplerView_)
+        return;
+    auto* sequence = reinterpret_cast<qint32*>(dopplerView_ + 36);
+    const qint32 previous =
+        __atomic_load_n(sequence, __ATOMIC_RELAXED);
+    __atomic_store_n(sequence, (previous & ~1) + 1, __ATOMIC_RELAXED);
+    __atomic_store_n(reinterpret_cast<quint32*>(dopplerView_ + 0),
+                     kDopplerMagic, __ATOMIC_RELAXED);
+    __atomic_store_n(reinterpret_cast<quint32*>(dopplerView_ + 4), 1U,
+                     __ATOMIC_RELAXED);
+    __atomic_store_n(reinterpret_cast<qint64*>(dopplerView_ + 8),
+                     targetHz, __ATOMIC_RELAXED);
+    __atomic_store_n(reinterpret_cast<qint64*>(dopplerView_ + 16),
+                     correctionHz, __ATOMIC_RELAXED);
+    __atomic_store_n(reinterpret_cast<qint64*>(dopplerView_ + 24),
+                     QDateTime::currentMSecsSinceEpoch(),
+                     __ATOMIC_RELAXED);
+    __atomic_store_n(reinterpret_cast<qint32*>(dopplerView_ + 32),
+                     valid ? 1 : 0, __ATOMIC_RELAXED);
+    __atomic_store_n(sequence, (previous & ~1) + 2, __ATOMIC_RELEASE);
 #endif
 }
-
-#ifndef Q_OS_WIN
-// The existing Linux input still uses Network/Rigctl until it has a native
-// shared-memory transport. Windows control goes exclusively through the bridge.
-void SatelliteTrackerDialog::publishRigctl(qint64 targetHz, bool valid)
-{
-    if (!integrated_ || !rigctl_ || !valid || targetHz <= 0)
-        return;
-    if (rigctl_->state() == QAbstractSocket::UnconnectedState) {
-        rigctl_->connectToHost(rigctl_->property("host").toString(),
-                               static_cast<quint16>(rigctl_->property("port").toInt()));
-        return;
-    }
-    if (rigctl_->state() != QAbstractSocket::ConnectedState)
-        return;
-    rigctl_->write(QByteArray("F ") + QByteArray::number(targetHz) + QByteArray("\n"));
-    rigctl_->flush();
-}
-#endif
